@@ -17,6 +17,7 @@
     "@react-navigation/native": "^7.1.6",
     "expo": "~53.0.22",
     "expo-blur": "~14.1.5",
+    "expo-clipboard": "~6.0.2",
     "expo-constants": "~17.1.7",
     "expo-font": "~13.3.2",
     "expo-haptics": "~14.1.4",
@@ -39,10 +40,11 @@
     "react-native-webview": "13.13.5",
     "react-router-dom": "^7.8.2",
     "socket.io-client": "^4.8.1",
-    "expo-clipboard": "~6.0.2"
+    "@react-native-async-storage/async-storage": "2.1.2"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
+    "@react-native-community/cli": "^20.0.1",
     "@types/react": "~19.0.10",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~9.2.0",

@@ -1,17 +1,18 @@
-
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import socket from "../../socket";
 
 export default function LobbyScreen() {
-  const { roomId = "", name = "" } = useLocalSearchParams();
+  const { roomId = "", name = "", mode = "join" } = useLocalSearchParams();
   const router = useRouter();
 
   const [players, setPlayers] = useState({});
   const [ready, setReady] = useState(false);
   const [hostId, setHostId] = useState(null);
   const [myId, setMyId] = useState(socket.id ?? null);
+  const [playerId, setPlayerId] = useState(null);
 
   const playerList = useMemo(() => Object.values(players ?? {}), [players]);
   const hostName = hostId && players[hostId]?.name ? players[hostId].name : null;
@@ -24,63 +25,119 @@ export default function LobbyScreen() {
 
   const minPlayersMet = useMemo(() => Object.keys(players||{}).length >= 3, [players]);
 
+  const savePlayerId = async (id) => {
+    try {
+      await AsyncStorage.setItem("playerId", id);
+      setPlayerId(id);
+    } catch (e) {
+      console.error("Failed to save playerId", e);
+    }
+  };
+
   const join = useCallback(() => {
     const rn = String(roomId || "").toUpperCase();
     const nm = String(name || "Player").trim() || "Player";
-    socket.emit("joinLobby", { roomId: rn, name: nm });
-  }, [roomId, name]);
+
+    if (mode === "create") {
+      socket.emit("createRoom", { roomId: rn, name: nm, playerId }, (ack) => {
+        if (ack?.success) {
+          savePlayerId(ack.playerId);
+          setHostId(socket.id);
+          setPlayers({ [socket.id]: { id: socket.id, name: nm, ready: false } });
+        } else {
+          Alert.alert("Error", ack?.message || "Could not create room");
+        }
+      });
+    } else {
+      socket.emit("joinRoom", { roomId: rn, name: nm, playerId }, (ack) => {
+        if (ack?.success) {
+          savePlayerId(ack.playerId);
+        } else {
+          Alert.alert("Error", ack?.message || "Lobby not found");
+        }
+      });
+    }
+  }, [roomId, name, mode, playerId]);
+
+  useEffect(() => {
+    const init = async () => {
+      const storedId = await AsyncStorage.getItem("playerId");
+      if (storedId) {
+        setPlayerId(storedId);
+      }
+    };
+    init();
+  }, []);
 
   useEffect(() => {
     const onConnect = () => {
       setMyId(socket.id);
-      join();
+      if (playerId) {
+        socket.emit("reconnectToRoom", { roomId: String(roomId).toUpperCase(), playerId }, (ack) => {
+          if (!ack?.success) {
+            join();
+          }
+        });
+      } else {
+        join();
+      }
     };
+
     if (socket.connected) onConnect();
     socket.on("connect", onConnect);
 
     const onLobby = ({ players, hostId }) => {
       setPlayers(players || {});
       setHostId(hostId || null);
-      // keep my ready state in sync
-      const me = (players || {})[socket.id];
+
+      const me = Object.values(players || {}).find(p => p.playerId === playerId);
       if (me && typeof me.ready === "boolean") setReady(!!me.ready);
     };
-    const onError = (msg) => Alert.alert("Lobby", String(msg||"Error"));
+
+    const onHostAssigned = ({ hostId }) => setHostId(hostId || null);
+    const onError = (msg) => Alert.alert("Lobby", String(msg || "Error"));
     const onStarted = () => {
       router.replace({ pathname: "/game/[roomId]", params: { roomId: String(roomId).toUpperCase() } });
     };
 
     socket.on("lobbyUpdate", onLobby);
+    socket.on("hostAssigned", onHostAssigned);
     socket.on("errorMsg", onError);
     socket.on("gameStarted", onStarted);
 
     return () => {
       socket.off("connect", onConnect);
       socket.off("lobbyUpdate", onLobby);
+      socket.off("hostAssigned", onHostAssigned);
       socket.off("errorMsg", onError);
       socket.off("gameStarted", onStarted);
-      socket.emit("leaveLobby", { roomId: String(roomId||"").toUpperCase() });
+      socket.emit("leaveLobby", { roomId: String(roomId || "").toUpperCase(), playerId });
     };
-  }, [roomId, name, join, router]);
+  }, [roomId, name, join, router, playerId]);
 
   const toggleReady = () => {
     const next = !ready;
     setReady(next);
-    socket.emit("playerReady", { roomId: String(roomId||"").toUpperCase(), ready: next });
+    socket.emit("playerReady", { roomId: String(roomId||"").toUpperCase(), playerId, ready: next });
   };
 
   const startGame = () => {
-    socket.emit("startGame", { roomId: String(roomId||"").toUpperCase() });
+    if (!everyoneReady) return;
+    socket.emit("startGame", { roomId: String(roomId||"").toUpperCase(), playerId });
   };
 
   const renderPlayer = ({ item }) => {
-    const isHost = hostId && item.id === hostId;
-    const isMe = myId && item.id === myId;
+    const isHost = hostId && item.playerId === hostId;
+    const isMe = playerId && item.playerId === playerId;
+
     return (
       <View style={[styles.playerItem, isHost && styles.hostItem]}>
-        <Text style={styles.playerText}>
-          {item.name}{isMe ? " (You)" : ""}{isHost ? " — Host" : ""} {item.ready ? "✅" : "🟡"}
-        </Text>
+        <View style={styles.playerRow}>
+          <View style={[styles.statusDot, { backgroundColor: item.ready ? "#4CAF50" : "#FFC107" }]} />
+          <Text style={styles.playerText}>
+            {item.name}{isMe ? " (You)" : ""}{isHost ? " — Host" : ""}
+          </Text>
+        </View>
       </View>
     );
   };
@@ -94,7 +151,7 @@ export default function LobbyScreen() {
 
       <FlatList
         data={playerList}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => item.playerId || item.id}
         renderItem={renderPlayer}
         style={{ width: "100%", marginTop: 10 }}
       />
@@ -106,14 +163,16 @@ export default function LobbyScreen() {
       {amHost ? (
         <TouchableOpacity
           onPress={startGame}
-          style={[styles.startButton, (everyoneReady ? styles.startEnabled : styles.startDisabled)]}
+          style={[styles.startButton, everyoneReady ? styles.startEnabled : styles.startDisabled]}
           disabled={!everyoneReady}
         >
           <Text style={styles.startButtonText}>{everyoneReady ? "Start Game" : "Waiting for everyone…"}</Text>
         </TouchableOpacity>
       ) : (
         <TouchableOpacity disabled style={[styles.startButton, styles.startDisabled]}>
-          <Text style={styles.startButtonText}>{minPlayersMet ? (hostName ? `Waiting for ${hostName}…` : "Waiting for host…") : "Waiting for players…"}</Text>
+          <Text style={styles.startButtonText}>
+            {minPlayersMet ? (hostName ? `Waiting for ${hostName}…` : "Waiting for host…") : "Waiting for players…"}
+          </Text>
         </TouchableOpacity>
       )}
     </View>
@@ -126,6 +185,8 @@ const styles = StyleSheet.create({
   subtitle: { color:"#bcd", fontSize:14, marginBottom: 6 },
   playerItem: { backgroundColor:"#1c2541", borderRadius: 12, padding: 12, marginBottom: 8 },
   hostItem: { borderWidth: 2, borderColor: "#4CAF50" },
+  playerRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  statusDot: { width: 14, height: 14, borderRadius: 7 },
   playerText: { color:"#fff", fontSize:16 },
   readyButton: { marginTop:8, paddingVertical:10, borderRadius:12, alignItems:"center", backgroundColor:"#444" },
   readyButtonActive: { backgroundColor: "#4CAF50" },
