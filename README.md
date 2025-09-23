@@ -1,50 +1,97 @@
-# Welcome to your Expo app 👋
+## Mafia Party Game
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A social deduction party game built with Expo / React Native (JavaScript + TypeScript). Players are assigned roles (e.g. Mafia, Detective, Civilian), and the game uses networking (via sockets) for real-time communication between players.
 
-## Get started
+## Project Structure
 
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
+Here’s how the repository is organized:
 ```bash
-npm run reset-project
+Mafia_Party_Game/
+├─ app/                 # Main React Native app code (screens, UI components)
+├─ assets/              # Static files (images, icons etc.)
+├─ constants/           # Constant definitions (role names, settings etc.)
+├─ hooks/               # Custom React hooks
+├─ scripts/             # Utilities / helper scripts (e.g. for development setup)
+├─ socket.js            # Socket logic for networking
+├─ package.json         # Dependencies & scripts
+├─ tsconfig.json        # TypeScript configuration
+├─ eslint.config.js     # linting / style rules
+├─ app.json             # Expo project config
+├─ .gitignore
+└─ README.md            # This file
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## Getting Started
 
-## Learn more
+Prerequisites
+- Node.js & npm (or Yarn)
+- Expo CLI globally installed (npm install -g expo-cli)
+- Device / simulator for testing (Android, iOS, or Expo Go app)
 
-To learn more about developing your project with Expo, look at the following resources:
+Setup & Run
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Clone the repository:
+```bash
+git clone https://github.com/Shobhan1000/Mafia_Party_Game.git
+cd Mafia_Party_Game
+```
 
-## Join the community
+Install dependencies:
+```bash
+npm install
+# or
+yarn install
+```
 
-Join our community of developers creating universal apps.
+Start the development server:
+```bash
+npx expo start
+```
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Open the app on your device / simulator:
+
+- Via Expo Go
+- Or using an Android / iOS emulator
+
+## How to Play
+
+Here’s a typical flow of the game:
+
+- One player acts as Host and starts a game lobby.
+- Players join the lobby via the app (or via network).
+- Once enough players have joined, the Host starts the game.
+- Night Phase: Mafia choose a target; Detective may investigate, etc.
+- Day Phase: Players discuss who might be Mafia; voting occurs.
+- The player with most votes is eliminated.
+- Repeat Night/Day until end condition: Mafia outnumber civilians or all Mafia are eliminated.
+
+# Dependencies / Configuration
+
+- React Native + Expo
+- Socket library for real-time events (socket.js)
+- TypeScript for type safety
+- Linting with ESLint
+- Use of constants and hooks to manage state & roles
+
+You may need to configure:
+
+- Socket server (if hosted separately or locally)
+- Role settings (how many Mafia, Detective etc.), which can be constants in constants/
+- Device permissions if any (camera, notifications) depending on features
+
+## Roadmap / Future Ideas
+
+- More roles (Doctor, Jury, etc.)
+- Improved UI / UX (animations, sounds)
+- Better error handling / reconnection for sockets
+- Score tracking / multiple rounds
+- Localization / theme support
+
+## Contributing
+
+Contributions are welcome! Here’s how to help:
+
+- Fork the repo
+- Create a new branch for your feature or fix (e.g. feature/role-doctor)
+- Make your changes and test thoroughly
+- Submit a pull request, with clear description of feature or fix
