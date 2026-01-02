@@ -1,11 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   FlatList,
+  Modal,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -21,80 +23,220 @@ export default function LobbyScreen() {
   const [ready, setReady] = useState(false);
   const [hostId, setHostId] = useState(null);
   const [playerId, setPlayerId] = useState(null);
+  const [hasJoined, setHasJoined] = useState(false);
+  const [isLeaving, setIsLeaving] = useState(false);
+  const [roleSettings, setRoleSettings] = useState({
+    mafiaCount: 1,
+    detectiveCount: 1,
+    doctorCount: 1,
+    villagerCount: 1
+  });
+  const [showRoleSettings, setShowRoleSettings] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
 
-  // Load playerId from storage
-  useEffect(() => {
-    AsyncStorage.getItem("playerId").then(id => {
-      if (id) setPlayerId(id);
+  // Create a sorted player list with host first
+  const sortedPlayerList = useMemo(() => {
+    const playerArray = Object.values(players || {});
+    
+    // Filter out duplicates (by playerId)
+    const uniquePlayers = {};
+    playerArray.forEach(player => {
+      if (player && player.playerId) {
+        uniquePlayers[player.playerId] = player;
+      }
     });
+    
+    // Convert back to array and sort
+    const uniqueArray = Object.values(uniquePlayers);
+    return uniqueArray.sort((a, b) => {
+      // Host goes first
+      if (a.playerId === hostId) return -1;
+      if (b.playerId === hostId) return 1;
+      
+      // Then by name
+      return a.name.localeCompare(b.name);
+    });
+  }, [players, hostId]);
+
+  const amHost = hostId && playerId && hostId === playerId;
+  const myPlayer = playerId ? players[playerId] : null;
+
+  const everyoneReady = useMemo(() => {
+    const arr = sortedPlayerList;
+    return arr.length >= 3 && arr.every(p => !!p.ready);
+  }, [sortedPlayerList]);
+
+  const minPlayersMet = useMemo(() => sortedPlayerList.length >= 3, [sortedPlayerList]);
+
+  const savePlayerId = async (id) => {
+    try {
+      await AsyncStorage.setItem("playerId", id);
+      setPlayerId(id);
+    } catch (e) {
+      console.error("Failed to save playerId", e);
+    }
+  };
+
+  const joinRoom = useCallback(() => {
+    const rn = String(roomId || "").toUpperCase();
+    const nm = String(name || "Player").trim() || "Player";
+    
+    console.log(`Attempting to join room: ${rn} as ${nm}`);
+
+    // Generate a unique player ID if we don't have one
+    const storedPlayerId = playerId || `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Use createOrJoinRoom event
+    socket.emit("createOrJoinRoom", { 
+      roomId: rn, 
+      name: nm, 
+      playerId: storedPlayerId 
+    }, (ack) => {
+      console.log("Join response:", ack);
+      if (ack?.success) {
+        savePlayerId(ack.playerId);
+        setHasJoined(true);
+        setReady(false);
+        if (ack.roleSettings) {
+          setRoleSettings(ack.roleSettings);
+        }
+      } else {
+        Alert.alert("Error", ack?.message || "Could not create or join room");
+      }
+    });
+  }, [roomId, name, playerId]);
+
+  const leaveLobby = () => {
+    if (isLeaving) return;
+    
+    setIsLeaving(true);
+    Alert.alert(
+      "Leave Lobby",
+      "Are you sure you want to leave the lobby?",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+          onPress: () => setIsLeaving(false)
+        },
+        {
+          text: "Leave",
+          style: "destructive",
+          onPress: () => {
+            if (playerId && hasJoined) {
+              socket.emit("leaveLobby", { 
+                roomId: String(roomId || "").toUpperCase(), 
+                playerId 
+              });
+            }
+            router.replace("/");
+          }
+        }
+      ]
+    );
+  };
+
+  const updateRoleSettings = (newSettings) => {
+    if (!playerId || !amHost || !hasJoined) return;
+    
+    socket.emit("updateRoleSettings", {
+      roomId: String(roomId).toUpperCase(),
+      playerId,
+      roleSettings: newSettings
+    }, (response) => {
+      if (response?.success) {
+        setRoleSettings(response.roleSettings);
+      } else {
+        Alert.alert("Error", response?.message || "Failed to update role settings");
+      }
+    });
+  };
+
+  const calculateTotalRoles = () => {
+    return roleSettings.mafiaCount + roleSettings.detectiveCount + roleSettings.doctorCount;
+  };
+
+  const hasEnoughPlayersForRoles = () => {
+    const totalRoles = calculateTotalRoles();
+    return sortedPlayerList.length >= totalRoles;
+  };
+
+  useEffect(() => {
+    const init = async () => {
+      const storedId = await AsyncStorage.getItem("playerId");
+      if (storedId) {
+        setPlayerId(storedId);
+      }
+    };
+    init();
   }, []);
 
-  // Handle socket connection and room joining
   useEffect(() => {
-    if (!roomId || !name) return;
+    if (!roomId || !name || hasJoined) return;
 
     const onConnect = () => {
       console.log("Socket connected, joining room...");
       setIsConnected(true);
       
-      // Generate or use existing playerId
-      const storedPlayerId = playerId || `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
       if (playerId) {
-        AsyncStorage.setItem("playerId", storedPlayerId);
-        setPlayerId(storedPlayerId);
+        socket.emit("reconnectToRoom", { 
+          roomId: String(roomId).toUpperCase(), 
+          playerId 
+        }, (ack) => {
+          console.log("Reconnect response:", ack);
+          if (!ack?.success) {
+            joinRoom();
+          } else {
+            setHasJoined(true);
+          }
+        });
+      } else {
+        joinRoom();
       }
-
-      // Join the room
-      socket.emit("createOrJoinRoom", {
-        roomId: String(roomId).toUpperCase(),
-        name: String(name || "Player").trim() || "Player",
-        playerId: storedPlayerId
-      }, (response) => {
-        console.log("Join response:", response);
-        if (response?.success) {
-          setPlayerId(response.playerId);
-          setHostId(response.hostId);
-          setIsConnected(true);
-        } else {
-          Alert.alert("Error", response?.message || "Failed to join room");
-        }
-      });
     };
 
     const onDisconnect = () => {
       console.log("Socket disconnected");
       setIsConnected(false);
+      setHasJoined(false);
     };
 
-    const onLobbyUpdate = (data) => {
-      console.log("Lobby update received:", data);
-      setPlayers(data.players || {});
-      setHostId(data.hostId || null);
+    const onLobbyUpdate = ({ players: playersData, hostId: newHostId, roleSettings: newRoleSettings }) => {
+      console.log("Lobby update received:", { playersData, newHostId, newRoleSettings });
+      setPlayers(playersData || {});
+      setHostId(newHostId || null);
       
+      if (newRoleSettings) {
+        setRoleSettings(newRoleSettings);
+      }
+
       // Update my ready status
-      if (playerId && data.players && data.players[playerId]) {
-        setReady(!!data.players[playerId].ready);
+      if (playerId && playersData && playersData[playerId]) {
+        const myReadyStatus = !!playersData[playerId].ready;
+        console.log("My ready status updated:", myReadyStatus);
+        setReady(myReadyStatus);
       }
     };
 
-    const onHostAssigned = (data) => {
-      console.log("Host assigned:", data);
-      setHostId(data.hostId);
+    const onHostAssigned = ({ hostId: newHostId }) => {
+      console.log("Host assigned:", newHostId);
+      setHostId(newHostId || null);
+    };
+
+    const onError = (msg) => {
+      console.log("Socket error:", msg);
+      Alert.alert("Error", String(msg || "An error occurred"));
     };
 
     const onGameStarted = (data) => {
       console.log("Game started:", data);
-      router.replace({
-        pathname: "/game/[roomId]",
-        params: { roomId: String(roomId).toUpperCase() }
+      router.replace({ 
+        pathname: "/game/[roomId]", 
+        params: { 
+          roomId: String(roomId).toUpperCase(),
+          playerId: playerId 
+        } 
       });
-    };
-
-    const onError = (msg) => {
-      console.log("Error:", msg);
-      Alert.alert("Error", String(msg || "Something went wrong"));
     };
 
     // Setup event listeners
@@ -102,8 +244,8 @@ export default function LobbyScreen() {
     socket.on("disconnect", onDisconnect);
     socket.on("lobbyUpdate", onLobbyUpdate);
     socket.on("hostAssigned", onHostAssigned);
-    socket.on("gameStarted", onGameStarted);
     socket.on("errorMsg", onError);
+    socket.on("gameStarted", onGameStarted);
 
     // Connect if not already connected
     if (!socket.connected) {
@@ -118,21 +260,21 @@ export default function LobbyScreen() {
       socket.off("disconnect", onDisconnect);
       socket.off("lobbyUpdate", onLobbyUpdate);
       socket.off("hostAssigned", onHostAssigned);
-      socket.off("gameStarted", onGameStarted);
       socket.off("errorMsg", onError);
+      socket.off("gameStarted", onGameStarted);
       
       // Leave room on unmount
-      if (playerId) {
+      if (playerId && hasJoined) {
         socket.emit("leaveLobby", {
           roomId: String(roomId).toUpperCase(),
           playerId
         });
       }
     };
-  }, [roomId, name]);
+  }, [roomId, name, playerId, hasJoined, joinRoom, router]);
 
   const toggleReady = () => {
-    if (!playerId || !isConnected) return;
+    if (!playerId || !hasJoined) return;
     
     const newReady = !ready;
     setReady(newReady);
@@ -145,7 +287,18 @@ export default function LobbyScreen() {
   };
 
   const startGame = () => {
-    if (!playerId || !isConnected) return;
+    if (!playerId || !hasJoined || !amHost) return;
+    
+    // Check if we have enough players for the selected roles
+    if (!hasEnoughPlayersForRoles()) {
+      const totalRoles = calculateTotalRoles();
+      Alert.alert(
+        "Not Enough Players",
+        `You have ${sortedPlayerList.length} players but your role settings require at least ${totalRoles} players.`,
+        [{ text: "OK" }]
+      );
+      return;
+    }
     
     socket.emit("startGame", {
       roomId: String(roomId).toUpperCase(),
@@ -153,58 +306,162 @@ export default function LobbyScreen() {
     });
   };
 
-  const leaveLobby = () => {
-    Alert.alert(
-      "Leave Lobby",
-      "Are you sure you want to leave?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Leave",
-          style: "destructive",
-          onPress: () => {
-            if (playerId) {
-              socket.emit("leaveLobby", {
-                roomId: String(roomId).toUpperCase(),
-                playerId
-              });
-            }
-            router.back();
-          }
-        }
-      ]
-    );
+  const copyRoomCode = async () => {
+    const code = String(roomId).toUpperCase();
+    try {
+      await navigator.clipboard?.writeText?.(code);
+      Alert.alert("Copied!", `Room code ${code} copied to clipboard`);
+    } catch (error) {
+      Alert.alert("Room Code", `Share this code: ${code}`);
+    }
   };
 
-  // Prepare player list
-  const playerList = useMemo(() => {
-    return Object.values(players || {}).sort((a, b) => {
-      // Host first
-      if (a.playerId === hostId) return -1;
-      if (b.playerId === hostId) return 1;
-      // Then by name
-      return a.name.localeCompare(b.name);
-    });
-  }, [players, hostId]);
+  const RoleSettingsModal = () => (
+    <Modal
+      visible={showRoleSettings}
+      transparent
+      animationType="slide"
+      onRequestClose={() => setShowRoleSettings(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.roleSettingsModal}>
+          <Text style={styles.roleSettingsTitle}>Role Settings</Text>
+          
+          <ScrollView style={styles.roleSettingsScroll}>
+            {/* Mafia Setting */}
+            <View style={styles.roleSettingItem}>
+              <View style={styles.roleSettingLabelContainer}>
+                <Text style={styles.roleSettingEmoji}>🕶️</Text>
+                <Text style={styles.roleSettingLabel}>Mafia</Text>
+              </View>
+              <View style={styles.roleSettingControls}>
+                <TouchableOpacity 
+                  onPress={() => updateRoleSettings({
+                    ...roleSettings,
+                    mafiaCount: Math.max(1, roleSettings.mafiaCount - 1)
+                  })}
+                  style={styles.roleSettingButton}
+                  disabled={roleSettings.mafiaCount <= 1}
+                >
+                  <Text style={styles.roleSettingButtonText}>-</Text>
+                </TouchableOpacity>
+                <Text style={styles.roleSettingValue}>{roleSettings.mafiaCount}</Text>
+                <TouchableOpacity 
+                  onPress={() => updateRoleSettings({
+                    ...roleSettings,
+                    mafiaCount: roleSettings.mafiaCount + 1
+                  })}
+                  style={styles.roleSettingButton}
+                >
+                  <Text style={styles.roleSettingButtonText}>+</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            
+            {/* Detective Setting */}
+            <View style={styles.roleSettingItem}>
+              <View style={styles.roleSettingLabelContainer}>
+                <Text style={styles.roleSettingEmoji}>🕵️</Text>
+                <Text style={styles.roleSettingLabel}>Detective</Text>
+              </View>
+              <View style={styles.roleSettingControls}>
+                <TouchableOpacity 
+                  onPress={() => updateRoleSettings({
+                    ...roleSettings,
+                    detectiveCount: Math.max(0, roleSettings.detectiveCount - 1)
+                  })}
+                  style={styles.roleSettingButton}
+                  disabled={roleSettings.detectiveCount <= 0}
+                >
+                  <Text style={styles.roleSettingButtonText}>-</Text>
+                </TouchableOpacity>
+                <Text style={styles.roleSettingValue}>{roleSettings.detectiveCount}</Text>
+                <TouchableOpacity 
+                  onPress={() => updateRoleSettings({
+                    ...roleSettings,
+                    detectiveCount: roleSettings.detectiveCount + 1
+                  })}
+                  style={styles.roleSettingButton}
+                >
+                  <Text style={styles.roleSettingButtonText}>+</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            
+            {/* Doctor Setting */}
+            <View style={styles.roleSettingItem}>
+              <View style={styles.roleSettingLabelContainer}>
+                <Text style={styles.roleSettingEmoji}>⚕️</Text>
+                <Text style={styles.roleSettingLabel}>Doctor</Text>
+              </View>
+              <View style={styles.roleSettingControls}>
+                <TouchableOpacity 
+                  onPress={() => updateRoleSettings({
+                    ...roleSettings,
+                    doctorCount: Math.max(0, roleSettings.doctorCount - 1)
+                  })}
+                  style={styles.roleSettingButton}
+                  disabled={roleSettings.doctorCount <= 0}
+                >
+                  <Text style={styles.roleSettingButtonText}>-</Text>
+                </TouchableOpacity>
+                <Text style={styles.roleSettingValue}>{roleSettings.doctorCount}</Text>
+                <TouchableOpacity 
+                  onPress={() => updateRoleSettings({
+                    ...roleSettings,
+                    doctorCount: roleSettings.doctorCount + 1
+                  })}
+                  style={styles.roleSettingButton}
+                >
+                  <Text style={styles.roleSettingButtonText}>+</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
+          
+          <View style={styles.roleSettingsInfo}>
+            <Text style={styles.roleSettingsInfoText}>
+              Players: {sortedPlayerList.length}
+            </Text>
+            <Text style={styles.roleSettingsInfoText}>
+              Required for roles: {calculateTotalRoles()}
+            </Text>
+            {!hasEnoughPlayersForRoles() && (
+              <Text style={styles.roleSettingsWarning}>
+                ⚠️ Need {calculateTotalRoles() - sortedPlayerList.length} more player(s)
+              </Text>
+            )}
+            <Text style={styles.roleSettingsNote}>
+              Villagers will be auto-assigned to fill remaining slots
+            </Text>
+          </View>
+          
+          <TouchableOpacity 
+            onPress={() => setShowRoleSettings(false)}
+            style={styles.roleSettingsCloseButton}
+          >
+            <Text style={styles.roleSettingsCloseText}>Done</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
 
-  const amHost = playerId && hostId && playerId === hostId;
-  const canStart = playerList.length >= 3 && playerList.every(p => p.ready);
-
-  // Render player item
   const renderPlayer = ({ item }) => {
     const isHost = item.playerId === hostId;
     const isMe = item.playerId === playerId;
 
     return (
       <View style={[
-        styles.playerItem,
+        styles.playerItem, 
         isHost && styles.hostItem,
         isMe && styles.meItem
       ]}>
         <View style={styles.playerRow}>
           <View style={styles.playerInfo}>
             <Text style={styles.playerName}>
-              {item.name} {isMe && "(You)"}
+              {item.name}
+              {isMe && <Text style={styles.youText}> (You)</Text>}
             </Text>
             {isHost && (
               <View style={styles.hostBadge}>
@@ -213,13 +470,16 @@ export default function LobbyScreen() {
               </View>
             )}
           </View>
-          <View style={[
-            styles.statusBadge,
-            { backgroundColor: item.ready ? "#4CAF50" : "#FF9800" }
-          ]}>
-            <Text style={styles.statusText}>
-              {item.ready ? "READY" : "NOT READY"}
-            </Text>
+          
+          <View style={styles.rightSection}>
+            <View style={[
+              styles.statusIndicator,
+              { backgroundColor: item.ready ? "#4CAF50" : "#FF9800" }
+            ]}>
+              <Text style={styles.statusText}>
+                {item.ready ? "READY" : "NOT READY"}
+              </Text>
+            </View>
           </View>
         </View>
       </View>
@@ -228,6 +488,8 @@ export default function LobbyScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <RoleSettingsModal />
+      
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={leaveLobby} style={styles.backButton}>
@@ -235,8 +497,8 @@ export default function LobbyScreen() {
           <Text style={styles.backButtonText}>Leave</Text>
         </TouchableOpacity>
         
-        <View style={styles.titleContainer}>
-          <Text style={styles.title}>Room: {String(roomId).toUpperCase()}</Text>
+        <View style={styles.roomInfo}>
+          <Text style={styles.roomCode}>Room: {String(roomId).toUpperCase()}</Text>
           <View style={styles.connectionStatus}>
             <View style={[
               styles.connectionDot,
@@ -248,62 +510,109 @@ export default function LobbyScreen() {
           </View>
         </View>
         
-        <View style={styles.placeholder} />
+        <TouchableOpacity onPress={copyRoomCode} style={styles.copyButton}>
+          <Ionicons name="copy-outline" size={20} color="#fff" />
+        </TouchableOpacity>
       </View>
 
-      {/* Player List */}
-      <View style={styles.playerListContainer}>
-        <View style={styles.playerCount}>
-          <Text style={styles.playerCountText}>
-            Players: {playerList.length}/10
+      {/* Main Content */}
+      <View style={styles.content}>
+        {/* Role Settings Preview */}
+        {amHost && (
+          <TouchableOpacity 
+            onPress={() => setShowRoleSettings(true)}
+            style={styles.roleSettingsPreview}
+          >
+            <Text style={styles.roleSettingsPreviewText}>⚙️ Role Settings</Text>
+            <View style={styles.roleCountsPreview}>
+              <Text style={styles.roleCount}>🕶️ {roleSettings.mafiaCount}</Text>
+              <Text style={styles.roleCount}>🕵️ {roleSettings.detectiveCount}</Text>
+              <Text style={styles.roleCount}>⚕️ {roleSettings.doctorCount}</Text>
+            </View>
+          </TouchableOpacity>
+        )}
+        
+        {/* Player Count */}
+        <View style={styles.playerCountSection}>
+          <Text style={styles.playerCount}>
+            Players: {sortedPlayerList.length}/10
           </Text>
-          <Text style={styles.readyCountText}>
-            Ready: {playerList.filter(p => p.ready).length}/{playerList.length}
+          <Text style={styles.readyCount}>
+            Ready: {sortedPlayerList.filter(p => p.ready).length}/{sortedPlayerList.length}
           </Text>
         </View>
-        
-        {playerList.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyStateText}>No players yet</Text>
+
+        {/* Connection Status */}
+        {!hasJoined || !isConnected ? (
+          <View style={styles.connectingView}>
+            <Text style={styles.connectingText}>Connecting to room...</Text>
           </View>
         ) : (
-          <FlatList
-            data={playerList}
-            keyExtractor={(item) => item.playerId}
-            renderItem={renderPlayer}
-            contentContainerStyle={styles.listContent}
-          />
-        )}
-      </View>
+          <>
+            {/* Players List */}
+            {sortedPlayerList.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyStateText}>No players in room</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={sortedPlayerList}
+                keyExtractor={(item) => item.playerId}
+                renderItem={renderPlayer}
+                contentContainerStyle={styles.playerList}
+                showsVerticalScrollIndicator={false}
+              />
+            )}
 
-      {/* Controls */}
-      <View style={styles.controls}>
-        <TouchableOpacity
-          onPress={toggleReady}
-          style={[styles.readyButton, ready && styles.readyButtonActive]}
-          disabled={!isConnected}
-        >
-          <Text style={styles.readyButtonText}>
-            {ready ? "READY ✓" : "MARK AS READY"}
-          </Text>
-        </TouchableOpacity>
+            {/* Ready Button */}
+            <TouchableOpacity 
+              onPress={toggleReady} 
+              style={[
+                styles.readyButton, 
+                ready && styles.readyButtonActive,
+                !hasJoined && styles.disabledButton
+              ]}
+              disabled={!hasJoined}
+            >
+              <Ionicons 
+                name={ready ? "checkmark-circle" : "ellipse-outline"} 
+                size={24} 
+                color="#fff" 
+              />
+              <Text style={styles.readyButtonText}>
+                {ready ? "READY ✓" : "MARK AS READY"}
+              </Text>
+            </TouchableOpacity>
 
-        {amHost ? (
-          <TouchableOpacity
-            onPress={startGame}
-            style={[styles.startButton, canStart && styles.startButtonActive]}
-            disabled={!canStart || !isConnected}
-          >
-            <Text style={styles.startButtonText}>
-              {canStart ? "START GAME" : "WAITING FOR PLAYERS"}
-            </Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.waitingContainer}>
-            <Text style={styles.waitingText}>
-              Waiting for host to start...
-            </Text>
-          </View>
+            {/* Start Game Button */}
+            {amHost ? (
+              <TouchableOpacity
+                onPress={startGame}
+                style={[
+                  styles.startButton, 
+                  everyoneReady && hasEnoughPlayersForRoles() ? styles.startButtonEnabled : styles.startButtonDisabled,
+                  !hasJoined && styles.disabledButton
+                ]}
+                disabled={!everyoneReady || !hasEnoughPlayersForRoles() || !hasJoined}
+              >
+                <Text style={styles.startButtonText}>
+                  {!everyoneReady 
+                    ? `WAITING FOR ${sortedPlayerList.length - sortedPlayerList.filter(p => p.ready).length} MORE READY`
+                    : !hasEnoughPlayersForRoles()
+                    ? `NEED ${calculateTotalRoles() - sortedPlayerList.length} MORE PLAYER(S)`
+                    : "START GAME"}
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.waitingView}>
+                <Text style={styles.waitingText}>
+                  {minPlayersMet 
+                    ? `Waiting for host to start...` 
+                    : `Need ${3 - sortedPlayerList.length} more players to start`}
+                </Text>
+              </View>
+            )}
+          </>
         )}
       </View>
     </SafeAreaView>
@@ -317,8 +626,8 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
+    alignItems: "center",
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
@@ -333,10 +642,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginLeft: 4,
   },
-  titleContainer: {
+  roomInfo: {
     alignItems: "center",
   },
-  title: {
+  roomCode: {
     color: "#fff",
     fontSize: 18,
     fontWeight: "bold",
@@ -356,27 +665,59 @@ const styles = StyleSheet.create({
     color: "#ccc",
     fontSize: 12,
   },
-  placeholder: {
-    width: 60,
+  copyButton: {
+    padding: 8,
   },
-  playerListContainer: {
+  content: {
     flex: 1,
     padding: 16,
   },
-  playerCount: {
+  roleSettingsPreview: {
+    backgroundColor: "#2d3a5e",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+    alignItems: "center",
+  },
+  roleSettingsPreviewText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: 8,
+  },
+  roleCountsPreview: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    width: "100%",
+  },
+  roleCount: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  playerCountSection: {
     flexDirection: "row",
     justifyContent: "space-between",
     marginBottom: 16,
   },
-  playerCountText: {
-    color: "#fff",
+  playerCount: {
+    color: "#bcd",
     fontSize: 16,
     fontWeight: "600",
   },
-  readyCountText: {
+  readyCount: {
     color: "#4CAF50",
     fontSize: 16,
     fontWeight: "600",
+  },
+  connectingView: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  connectingText: {
+    color: "#fff",
+    fontSize: 18,
   },
   emptyState: {
     flex: 1,
@@ -384,10 +725,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   emptyStateText: {
-    color: "#666",
-    fontSize: 18,
+    color: "#888",
+    fontSize: 16,
   },
-  listContent: {
+  playerList: {
     paddingBottom: 16,
   },
   playerItem: {
@@ -417,9 +758,15 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginBottom: 4,
   },
+  youText: {
+    color: "#4CAF50",
+    fontSize: 14,
+    fontStyle: "italic",
+  },
   hostBadge: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 4,
     backgroundColor: "rgba(255, 215, 0, 0.2)",
     paddingHorizontal: 8,
     paddingVertical: 2,
@@ -430,30 +777,31 @@ const styles = StyleSheet.create({
     color: "#FFD700",
     fontSize: 12,
     fontWeight: "600",
-    marginLeft: 4,
   },
-  statusBadge: {
+  rightSection: {
+    alignItems: "flex-end",
+  },
+  statusIndicator: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 12,
     minWidth: 80,
+    alignItems: "center",
   },
   statusText: {
     color: "#fff",
     fontSize: 12,
     fontWeight: "700",
-    textAlign: "center",
-  },
-  controls: {
-    padding: 16,
-    borderTopWidth: 1,
-    borderTopColor: "#1c2541",
   },
   readyButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
     backgroundColor: "#444",
     paddingVertical: 16,
+    paddingHorizontal: 24,
     borderRadius: 12,
-    alignItems: "center",
     marginBottom: 12,
   },
   readyButtonActive: {
@@ -465,22 +813,27 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   startButton: {
-    backgroundColor: "#333",
-    paddingVertical: 16,
+    paddingVertical: 18,
+    paddingHorizontal: 24,
     borderRadius: 12,
     alignItems: "center",
   },
-  startButtonActive: {
+  startButtonEnabled: {
     backgroundColor: "#e63946",
+  },
+  startButtonDisabled: {
+    backgroundColor: "#333",
   },
   startButtonText: {
     color: "#fff",
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "800",
+    textAlign: "center",
   },
-  waitingContainer: {
+  waitingView: {
+    paddingVertical: 18,
+    paddingHorizontal: 24,
     backgroundColor: "#333",
-    paddingVertical: 16,
     borderRadius: 12,
     alignItems: "center",
   },
@@ -488,5 +841,120 @@ const styles = StyleSheet.create({
     color: "#ccc",
     fontSize: 16,
     fontWeight: "600",
+    textAlign: "center",
+  },
+  disabledButton: {
+    opacity: 0.5,
+  },
+  // Role Settings Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.8)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  roleSettingsModal: {
+    backgroundColor: "#1c2541",
+    borderRadius: 20,
+    width: "100%",
+    maxWidth: 400,
+    maxHeight: "80%",
+  },
+  roleSettingsTitle: {
+    color: "#fff",
+    fontSize: 24,
+    fontWeight: "bold",
+    textAlign: "center",
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "#2d3a5e",
+  },
+  roleSettingsScroll: {
+    maxHeight: 300,
+    paddingHorizontal: 20,
+  },
+  roleSettingItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: "#2d3a5e",
+  },
+  roleSettingLabelContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  roleSettingEmoji: {
+    fontSize: 24,
+  },
+  roleSettingLabel: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "600",
+  },
+  roleSettingControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 15,
+  },
+  roleSettingButton: {
+    backgroundColor: "#e63946",
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  roleSettingButtonText: {
+    color: "#fff",
+    fontSize: 24,
+    fontWeight: "bold",
+  },
+  roleSettingValue: {
+    color: "#fff",
+    fontSize: 22,
+    fontWeight: "bold",
+    minWidth: 30,
+    textAlign: "center",
+  },
+  roleSettingsInfo: {
+    padding: 20,
+    borderTopWidth: 1,
+    borderTopColor: "#2d3a5e",
+  },
+  roleSettingsInfoText: {
+    color: "#ccc",
+    fontSize: 14,
+    marginBottom: 5,
+    textAlign: "center",
+  },
+  roleSettingsWarning: {
+    color: "#FF5252",
+    fontSize: 14,
+    fontWeight: "bold",
+    textAlign: "center",
+    marginTop: 10,
+  },
+  roleSettingsNote: {
+    color: "#888",
+    fontSize: 12,
+    textAlign: "center",
+    marginTop: 10,
+    fontStyle: "italic",
+  },
+  roleSettingsCloseButton: {
+    backgroundColor: "#4CAF50",
+    margin: 20,
+    paddingVertical: 15,
+    borderRadius: 10,
+    alignItems: "center",
+  },
+  roleSettingsCloseText: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "bold",
   },
 });
