@@ -35,22 +35,25 @@ export default function GameScreen() {
     });
   }, []);
 
-  // socket listeners
+  // In the useEffect of your game screen, update the event listeners:
   useEffect(() => {
     const onConnect = () => {
+      console.log("Game socket connected");
       if (playerId) {
-        socket.emit("reconnectToRoom", { roomId: String(roomId).toUpperCase(), playerId }, (ack) => {
-          if (!ack?.success) {
-            console.log("Reconnect failed, staying in spectator mode or awaiting rejoin");
-          }
+        socket.emit("reconnectToRoom", { 
+          roomId: String(roomId).toUpperCase(), 
+          playerId 
         });
       }
     };
+    
     if (socket.connected) onConnect();
     socket.on("connect", onConnect);
 
-    const onGameStarted = (playersObj) => {
-      setPlayers(playersObj || {});
+    // Listen for game started with role assignment
+    const onGameStarted = ({ roomId: rId, role: r }) => {
+      console.log("Game started, role:", r);
+      setRole(r);
       setPhase("night");
       setTimer(60);
       setShowRoleModal(true);
@@ -58,51 +61,46 @@ export default function GameScreen() {
     };
     socket.on("gameStarted", onGameStarted);
 
-    const onRole = (r) => setRole(r);
-    socket.on("roleAssigned", onRole);
-
-    const onPhase = ({ phase }) => {
-      setPhase(phase);
-      setTimer(phase === "day" ? 90 : 60);
+    // Listen for night begins
+    const onNightBegins = () => {
+      console.log("Night begins");
+      setPhase("night");
+      setTimer(60);
       setVotes({});
     };
-    socket.on("phaseChange", onPhase);
+    socket.on("nightBegins", onNightBegins);
 
-    const onLobbyUpdate = ({ players }) => setPlayers(players || {});
-    socket.on("lobbyUpdate", onLobbyUpdate);
-
-    const onPlayerEliminated = ({ playerId: eliminatedId, name, role }) => {
-      if (eliminatedId === playerId) setAlive(false);
-      setEliminatedMsg(`${name} was eliminated. They were ${role}.`);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    // Listen for day begins
+    const onDayBegins = ({ players: playersData }) => {
+      console.log("Day begins");
+      setPhase("day");
+      setTimer(90);
+      setPlayers(playersData || {});
+      setVotes({});
     };
-    socket.on("playerEliminated", onPlayerEliminated);
+    socket.on("dayBegins", onDayBegins);
 
+    // Listen for game over
     const onGameOver = ({ winner }) => {
+      console.log("Game over, winner:", winner);
       setWinner(winner);
       setPhase("gameOver");
     };
     socket.on("gameOver", onGameOver);
 
-    const onVoteUpdate = ({ votes }) => setVotes(votes || {});
-    socket.on("voteUpdate", onVoteUpdate);
-
-    const onMafiaMembers = (list) => setMafias(list || []);
-    socket.on("mafiaMembers", onMafiaMembers);
-
-    const onRevealRoles = ({ roles }) => setRevealRoles(roles || {});
+    // Listen for reveal roles
+    const onRevealRoles = ({ roles }) => {
+      console.log("Reveal roles:", roles);
+      setRevealRoles(roles || {});
+    };
     socket.on("revealRoles", onRevealRoles);
 
     return () => {
       socket.off("connect", onConnect);
       socket.off("gameStarted", onGameStarted);
-      socket.off("roleAssigned", onRole);
-      socket.off("phaseChange", onPhase);
-      socket.off("lobbyUpdate", onLobbyUpdate);
-      socket.off("playerEliminated", onPlayerEliminated);
+      socket.off("nightBegins", onNightBegins);
+      socket.off("dayBegins", onDayBegins);
       socket.off("gameOver", onGameOver);
-      socket.off("voteUpdate", onVoteUpdate);
-      socket.off("mafiaMembers", onMafiaMembers);
       socket.off("revealRoles", onRevealRoles);
     };
   }, [roomId, playerId]);

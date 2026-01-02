@@ -71,16 +71,8 @@ export default function Home() {
 
       <TextInput
         style={styles.input}
-        value={name}
-        onChangeText={setName}
-        placeholder="Your name"
-        autoCapitalize="words"
-      />
-
-      <TextInput
-        style={styles.input}
-        value={roomCode}
-        onChangeText={setRoomCode}
+        value={roomCode}  // Fixed: Changed from `name` to `roomCode`
+        onChangeText={setRoomCode}  // Fixed: Changed from `setName` to `setRoomCode`
         placeholder="Enter room code"
         autoCapitalize="characters"
       />

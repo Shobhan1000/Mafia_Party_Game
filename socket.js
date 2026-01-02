@@ -1,5 +1,12 @@
-import { io } from "socket.io-client";
+import { io } from 'socket.io-client';
 
-// use your Render URL instead of localhost
-export const socket = io("https://mafia-server-bp45.onrender.com");
+const SOCKET_URL = "https://mafia-server-bp45.onrender.com";
+
+const socket = io(SOCKET_URL, {
+  transports: ['websocket', 'polling'],
+  reconnection: true,
+  reconnectionAttempts: 5,
+  reconnectionDelay: 1000,
+});
+
 export default socket;
