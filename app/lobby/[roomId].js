@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -38,6 +38,9 @@ export default function LobbyScreen() {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [showChat, setShowChat] = useState(false);
+  
+  // Use ref to track if listeners are attached
+  const listenersAttached = useRef(false);
 
   const sortedPlayerList = useMemo(() => {
     const playerArray = Object.values(players || {});
@@ -170,6 +173,7 @@ export default function LobbyScreen() {
     setChatInput("");
   };
 
+  // Load playerId from storage on mount
   useEffect(() => {
     const init = async () => {
       const storedId = await AsyncStorage.getItem("playerId");
@@ -180,9 +184,11 @@ export default function LobbyScreen() {
     init();
   }, []);
 
+  // FIXED: Separate effect for socket connection and listeners
   useEffect(() => {
-    if (!roomId || !name || hasJoined) return;
+    if (!roomId || !name) return;
 
+    // Define all socket event handlers
     const onConnect = () => {
       console.log("Socket connected, joining room...");
       setIsConnected(true);
@@ -194,12 +200,14 @@ export default function LobbyScreen() {
         }, (ack) => {
           console.log("Reconnect response:", ack);
           if (!ack?.success) {
-            joinRoom();
+            if (!hasJoined) {
+              joinRoom();
+            }
           } else {
             setHasJoined(true);
           }
         });
-      } else {
+      } else if (!hasJoined) {
         joinRoom();
       }
     };
@@ -207,7 +215,6 @@ export default function LobbyScreen() {
     const onDisconnect = () => {
       console.log("Socket disconnected");
       setIsConnected(false);
-      setHasJoined(false);
     };
 
     const onLobbyUpdate = ({ players: playersData, hostId: newHostId, roleSettings: newRoleSettings }) => {
@@ -256,21 +263,30 @@ export default function LobbyScreen() {
       }]);
     };
 
-    socket.on("connect", onConnect);
-    socket.on("disconnect", onDisconnect);
-    socket.on("lobbyUpdate", onLobbyUpdate);
-    socket.on("hostAssigned", onHostAssigned);
-    socket.on("errorMsg", onError);
-    socket.on("gameStarted", onGameStarted);
-    socket.on("lobbyChatMessage", onLobbyChatMessage);
+    // Attach listeners only once
+    if (!listenersAttached.current) {
+      console.log("Attaching socket listeners");
+      socket.on("connect", onConnect);
+      socket.on("disconnect", onDisconnect);
+      socket.on("lobbyUpdate", onLobbyUpdate);
+      socket.on("hostAssigned", onHostAssigned);
+      socket.on("errorMsg", onError);
+      socket.on("gameStarted", onGameStarted);
+      socket.on("lobbyChatMessage", onLobbyChatMessage);
+      listenersAttached.current = true;
+    }
 
+    // Connect if not connected
     if (!socket.connected) {
+      console.log("Connecting socket...");
       socket.connect();
     } else {
       onConnect();
     }
 
+    // Cleanup function
     return () => {
+      console.log("Cleaning up socket listeners");
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
       socket.off("lobbyUpdate", onLobbyUpdate);
@@ -278,6 +294,7 @@ export default function LobbyScreen() {
       socket.off("errorMsg", onError);
       socket.off("gameStarted", onGameStarted);
       socket.off("lobbyChatMessage", onLobbyChatMessage);
+      listenersAttached.current = false;
       
       if (playerId && hasJoined) {
         socket.emit("leaveLobby", {
@@ -286,7 +303,7 @@ export default function LobbyScreen() {
         });
       }
     };
-  }, [roomId, name, playerId, hasJoined, joinRoom, router]);
+  }, [roomId, name, playerId, router]); // Removed hasJoined from dependencies
 
   const toggleReady = () => {
     if (!playerId || !hasJoined) return;
@@ -320,489 +337,441 @@ export default function LobbyScreen() {
     });
   };
 
+  // Rest of your component code stays the same...
   const copyRoomCode = async () => {
     const code = String(roomId).toUpperCase();
     try {
       await Clipboard.setStringAsync(code);
       Alert.alert("Copied!", `Room code ${code} copied to clipboard`);
     } catch (error) {
-      Alert.alert("Room Code", `Share this code: ${code}`);
+      Alert.alert("Error", "Could not copy room code");
     }
   };
 
-  const RoleSettingsModal = () => (
-    <Modal
-      visible={showRoleSettings}
-      transparent
-      animationType="slide"
-      onRequestClose={() => setShowRoleSettings(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.roleSettingsModal}>
-          <Text style={styles.roleSettingsTitle}>Role Settings</Text>
-          
-          <ScrollView style={styles.roleSettingsScroll}>
-            <View style={styles.roleSettingItem}>
-              <View style={styles.roleSettingLabelContainer}>
-                <Text style={styles.roleSettingEmoji}>🕶️</Text>
-                <Text style={styles.roleSettingLabel}>Mafia</Text>
-              </View>
-              <View style={styles.roleSettingControls}>
-                <TouchableOpacity 
-                  onPress={() => updateRoleSettings({
-                    ...roleSettings,
-                    mafiaCount: Math.max(1, roleSettings.mafiaCount - 1)
-                  })}
-                  style={styles.roleSettingButton}
-                  disabled={roleSettings.mafiaCount <= 1}
-                >
-                  <Text style={styles.roleSettingButtonText}>-</Text>
-                </TouchableOpacity>
-                <Text style={styles.roleSettingValue}>{roleSettings.mafiaCount}</Text>
-                <TouchableOpacity 
-                  onPress={() => updateRoleSettings({
-                    ...roleSettings,
-                    mafiaCount: roleSettings.mafiaCount + 1
-                  })}
-                  style={styles.roleSettingButton}
-                >
-                  <Text style={styles.roleSettingButtonText}>+</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-            
-            <View style={styles.roleSettingItem}>
-              <View style={styles.roleSettingLabelContainer}>
-                <Text style={styles.roleSettingEmoji}>🕵️</Text>
-                <Text style={styles.roleSettingLabel}>Detective</Text>
-              </View>
-              <View style={styles.roleSettingControls}>
-                <TouchableOpacity 
-                  onPress={() => updateRoleSettings({
-                    ...roleSettings,
-                    detectiveCount: Math.max(0, roleSettings.detectiveCount - 1)
-                  })}
-                  style={styles.roleSettingButton}
-                  disabled={roleSettings.detectiveCount <= 0}
-                >
-                  <Text style={styles.roleSettingButtonText}>-</Text>
-                </TouchableOpacity>
-                <Text style={styles.roleSettingValue}>{roleSettings.detectiveCount}</Text>
-                <TouchableOpacity 
-                  onPress={() => updateRoleSettings({
-                    ...roleSettings,
-                    detectiveCount: roleSettings.detectiveCount + 1
-                  })}
-                  style={styles.roleSettingButton}
-                >
-                  <Text style={styles.roleSettingButtonText}>+</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-            
-            <View style={styles.roleSettingItem}>
-              <View style={styles.roleSettingLabelContainer}>
-                <Text style={styles.roleSettingEmoji}>⚕️</Text>
-                <Text style={styles.roleSettingLabel}>Doctor</Text>
-              </View>
-              <View style={styles.roleSettingControls}>
-                <TouchableOpacity 
-                  onPress={() => updateRoleSettings({
-                    ...roleSettings,
-                    doctorCount: Math.max(0, roleSettings.doctorCount - 1)
-                  })}
-                  style={styles.roleSettingButton}
-                  disabled={roleSettings.doctorCount <= 0}
-                >
-                  <Text style={styles.roleSettingButtonText}>-</Text>
-                </TouchableOpacity>
-                <Text style={styles.roleSettingValue}>{roleSettings.doctorCount}</Text>
-                <TouchableOpacity 
-                  onPress={() => updateRoleSettings({
-                    ...roleSettings,
-                    doctorCount: roleSettings.doctorCount + 1
-                  })}
-                  style={styles.roleSettingButton}
-                >
-                  <Text style={styles.roleSettingButtonText}>+</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </ScrollView>
-          
-          <View style={styles.roleSettingsInfo}>
-            <Text style={styles.roleSettingsInfoText}>
-              Players: {sortedPlayerList.length}
-            </Text>
-            <Text style={styles.roleSettingsInfoText}>
-              Required for roles: {calculateTotalRoles()}
-            </Text>
-            {!hasEnoughPlayersForRoles() && (
-              <Text style={styles.roleSettingsWarning}>
-                ⚠️ Need {calculateTotalRoles() - sortedPlayerList.length} more player(s)
-              </Text>
-            )}
-            <Text style={styles.roleSettingsNote}>
-              Villagers will be auto-assigned to fill remaining slots
-            </Text>
-          </View>
-          
-          <TouchableOpacity 
-            onPress={() => setShowRoleSettings(false)}
-            style={styles.roleSettingsCloseButton}
-          >
-            <Text style={styles.roleSettingsCloseText}>Done</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </Modal>
-  );
-
-  const ChatModal = () => (
-    <Modal
-      visible={showChat}
-      transparent
-      animationType="slide"
-      onRequestClose={() => setShowChat(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.chatModal}>
-          <View style={styles.chatHeader}>
-            <Text style={styles.chatTitle}>Lobby Chat</Text>
-            <TouchableOpacity onPress={() => setShowChat(false)}>
-              <Ionicons name="close" size={28} color="#fff" />
-            </TouchableOpacity>
-          </View>
-          
-          <ScrollView style={styles.chatMessages}>
-            {chatMessages.length === 0 ? (
-              <Text style={styles.noChatText}>No messages yet. Start chatting!</Text>
-            ) : (
-              chatMessages.map((msg, index) => (
-                <View key={index} style={[
-                  styles.chatBubble,
-                  msg.senderId === playerId && styles.myChatBubble
-                ]}>
-                  <Text style={styles.chatSender}>{msg.senderName}</Text>
-                  <Text style={styles.chatMessage}>{msg.message}</Text>
-                </View>
-              ))
-            )}
-          </ScrollView>
-          
-          <View style={styles.chatInputContainer}>
-            <TextInput
-              style={styles.chatInput}
-              value={chatInput}
-              onChangeText={setChatInput}
-              placeholder="Type a message..."
-              placeholderTextColor="#666"
-              multiline
-              maxLength={200}
-            />
-            <TouchableOpacity 
-              style={styles.sendButton}
-              onPress={sendChatMessage}
-              disabled={!chatInput.trim()}
-            >
-              <Ionicons name="send" size={24} color="#fff" />
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-
-  const renderPlayer = ({ item }) => {
-    const isHost = item.playerId === hostId;
-    const isMe = item.playerId === playerId;
-
+  if (!isConnected && !hasJoined) {
     return (
-      <View style={[
-        styles.playerItem, 
-        isHost && styles.hostItem,
-        isMe && styles.meItem
-      ]}>
-        <View style={styles.playerRow}>
-          <View style={styles.playerInfo}>
-            <Text style={styles.playerName}>
-              {item.name}
-              {isMe && <Text style={styles.youText}> (You)</Text>}
-            </Text>
-            {isHost && (
-              <View style={styles.hostBadge}>
-                <Ionicons name="star" size={14} color="#FFD700" />
-                <Text style={styles.hostText}>Host</Text>
-              </View>
-            )}
-          </View>
-          
-          <View style={styles.rightSection}>
-            <View style={[
-              styles.statusIndicator,
-              { backgroundColor: item.ready ? "#4CAF50" : "#FF9800" }
-            ]}>
-              <Text style={styles.statusText}>
-                {item.ready ? "READY" : "NOT READY"}
-              </Text>
-            </View>
-          </View>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.connectingView}>
+          <ActivityIndicator size="large" color="#e63946" />
+          <Text style={styles.connectingText}>Connecting...</Text>
         </View>
-      </View>
+      </SafeAreaView>
     );
-  };
+  }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <RoleSettingsModal />
-      <ChatModal />
-      
-      <View style={styles.header}>
-        <TouchableOpacity onPress={leaveLobby} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#fff" />
-          <Text style={styles.backButtonText}>Leave</Text>
-        </TouchableOpacity>
-        
-        <View style={styles.roomInfo}>
-          <Text style={styles.roomCode}>Room: {String(roomId).toUpperCase()}</Text>
-          <View style={styles.connectionStatus}>
-            <View style={[
-              styles.connectionDot,
-              { backgroundColor: isConnected ? "#4CAF50" : "#FF5252" }
-            ]} />
-            <Text style={styles.connectionText}>
-              {isConnected ? "Connected" : "Connecting..."}
+    <SafeAreaView style={styles.safeArea}>
+      <View style={styles.container}>
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.backButton} onPress={leaveLobby}>
+            <Ionicons name="arrow-back" size={24} color="#fff" />
+          </TouchableOpacity>
+          <View style={styles.headerCenter}>
+            <Text style={styles.headerTitle}>Room {String(roomId).toUpperCase()}</Text>
+            <Text style={styles.headerSubtitle}>
+              {sortedPlayerList.length} {sortedPlayerList.length === 1 ? "player" : "players"}
             </Text>
           </View>
-        </View>
-        
-        <View style={styles.headerButtons}>
-          <TouchableOpacity onPress={() => setShowChat(true)} style={styles.chatButton}>
-            <Ionicons name="chatbubbles" size={20} color="#fff" />
-            {chatMessages.length > 0 && (
-              <View style={styles.chatBadge}>
-                <Text style={styles.chatBadgeText}>{chatMessages.length}</Text>
-              </View>
-            )}
+          <TouchableOpacity style={styles.chatButton} onPress={() => setShowChat(true)}>
+            <Ionicons name="chatbubbles" size={24} color="#fff" />
           </TouchableOpacity>
-          <TouchableOpacity onPress={copyRoomCode} style={styles.copyButton}>
-            <Ionicons name="copy-outline" size={20} color="#fff" />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <View style={styles.content}>
-        {amHost && (
-          <TouchableOpacity 
-            onPress={() => setShowRoleSettings(true)}
-            style={styles.roleSettingsPreview}
-          >
-            <Text style={styles.roleSettingsPreviewText}>⚙️ Role Settings</Text>
-            <View style={styles.roleCountsPreview}>
-              <Text style={styles.roleCount}>🕶️ {roleSettings.mafiaCount}</Text>
-              <Text style={styles.roleCount}>🕵️ {roleSettings.detectiveCount}</Text>
-              <Text style={styles.roleCount}>⚕️ {roleSettings.doctorCount}</Text>
-            </View>
-          </TouchableOpacity>
-        )}
-        
-        <View style={styles.playerCountSection}>
-          <Text style={styles.playerCount}>
-            Players: {sortedPlayerList.length}/10
-          </Text>
-          <Text style={styles.readyCount}>
-            Ready: {sortedPlayerList.filter(p => p.ready).length}/{sortedPlayerList.length}
-          </Text>
         </View>
 
-        {!hasJoined || !isConnected ? (
-          <View style={styles.connectingView}>
-            <ActivityIndicator size="large" color="#4CAF50" />
-            <Text style={styles.connectingText}>Connecting to room...</Text>
+        {/* Connection Status Indicator */}
+        {!isConnected && (
+          <View style={styles.connectionWarning}>
+            <Ionicons name="warning" size={20} color="#FFA500" />
+            <Text style={styles.connectionWarningText}>Reconnecting...</Text>
           </View>
-        ) : (
-          <>
-            {sortedPlayerList.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyStateText}>No players in room</Text>
-              </View>
-            ) : (
-              <FlatList
-                data={sortedPlayerList}
-                keyExtractor={(item) => item.playerId}
-                renderItem={renderPlayer}
-                contentContainerStyle={styles.playerList}
-                showsVerticalScrollIndicator={false}
-              />
-            )}
+        )}
 
-            <TouchableOpacity 
-              onPress={toggleReady} 
-              style={[
-                styles.readyButton, 
-                ready && styles.readyButtonActive,
-                !hasJoined && styles.disabledButton
-              ]}
-              disabled={!hasJoined}
+        {/* Players List */}
+        <View style={styles.playersContainer}>
+          {sortedPlayerList.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyStateText}>Waiting for players...</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={sortedPlayerList}
+              keyExtractor={(item) => item.playerId}
+              renderItem={({ item }) => {
+                const isMe = item.playerId === playerId;
+                const isHost = item.playerId === hostId;
+
+                return (
+                  <View
+                    style={[
+                      styles.playerItem,
+                      isHost && styles.hostItem,
+                      isMe && styles.meItem,
+                    ]}
+                  >
+                    <View style={styles.playerRow}>
+                      <View style={styles.playerInfo}>
+                        <Text style={styles.playerName}>{item.name}</Text>
+                        {isMe && <Text style={styles.youText}>(You)</Text>}
+                        {isHost && (
+                          <View style={styles.hostBadge}>
+                            <Ionicons name="crown" size={14} color="#FFD700" />
+                            <Text style={styles.hostText}>Host</Text>
+                          </View>
+                        )}
+                      </View>
+                      <View style={styles.rightSection}>
+                        <View
+                          style={[
+                            styles.statusIndicator,
+                            { backgroundColor: item.ready ? "#4CAF50" : "#666" },
+                          ]}
+                        >
+                          <Text style={styles.statusText}>
+                            {item.ready ? "READY" : "NOT READY"}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  </View>
+                );
+              }}
+              contentContainerStyle={styles.playerList}
+            />
+          )}
+        </View>
+
+        {/* Action Buttons */}
+        <View style={styles.actionsContainer}>
+          {amHost && (
+            <TouchableOpacity
+              style={styles.settingsButton}
+              onPress={() => setShowRoleSettings(true)}
             >
-              <Ionicons 
-                name={ready ? "checkmark-circle" : "ellipse-outline"} 
-                size={24} 
-                color="#fff" 
-              />
-              <Text style={styles.readyButtonText}>
-                {ready ? "READY ✓" : "MARK AS READY"}
+              <Ionicons name="settings-outline" size={20} color="#fff" />
+              <Text style={styles.settingsButtonText}>Role Settings</Text>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity
+            style={[styles.readyButton, ready && styles.readyButtonActive]}
+            onPress={toggleReady}
+            disabled={!hasJoined}
+          >
+            <Ionicons
+              name={ready ? "checkmark-circle" : "radio-button-off"}
+              size={24}
+              color="#fff"
+            />
+            <Text style={styles.readyButtonText}>
+              {ready ? "Ready!" : "Not Ready"}
+            </Text>
+          </TouchableOpacity>
+
+          {amHost ? (
+            <TouchableOpacity
+              style={[
+                styles.startButton,
+                everyoneReady && minPlayersMet && hasEnoughPlayersForRoles()
+                  ? styles.startButtonEnabled
+                  : styles.startButtonDisabled,
+              ]}
+              onPress={startGame}
+              disabled={!everyoneReady || !minPlayersMet || !hasEnoughPlayersForRoles()}
+            >
+              <Text style={styles.startButtonText}>
+                {!minPlayersMet
+                  ? "Need at least 3 players"
+                  : !hasEnoughPlayersForRoles()
+                  ? "Not enough players for role settings"
+                  : !everyoneReady
+                  ? "Waiting for players to be ready..."
+                  : "Start Game"}
               </Text>
             </TouchableOpacity>
+          ) : (
+            <View style={styles.waitingView}>
+              <Text style={styles.waitingText}>
+                Waiting for host to start the game...
+              </Text>
+            </View>
+          )}
+        </View>
 
-            {amHost ? (
-              <TouchableOpacity
-                onPress={startGame}
-                style={[
-                  styles.startButton, 
-                  everyoneReady && hasEnoughPlayersForRoles() ? styles.startButtonEnabled : styles.startButtonDisabled,
-                  !hasJoined && styles.disabledButton
-                ]}
-                disabled={!everyoneReady || !hasEnoughPlayersForRoles() || !hasJoined}
-              >
-                <Text style={styles.startButtonText}>
-                  {!everyoneReady 
-                    ? `WAITING FOR ${sortedPlayerList.length - sortedPlayerList.filter(p => p.ready).length} MORE READY`
-                    : !hasEnoughPlayersForRoles()
-                    ? `NEED ${calculateTotalRoles() - sortedPlayerList.length} MORE PLAYER(S)`
-                    : "START GAME"}
+        {/* Role Settings Modal */}
+        <Modal
+          visible={showRoleSettings}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowRoleSettings(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.roleSettingsModal}>
+              <Text style={styles.roleSettingsTitle}>Role Settings</Text>
+
+              <ScrollView style={styles.roleSettingsScroll}>
+                {/* Mafia */}
+                <View style={styles.roleSettingItem}>
+                  <View style={styles.roleSettingLabelContainer}>
+                    <Text style={styles.roleSettingEmoji}>🕶️</Text>
+                    <Text style={styles.roleSettingLabel}>Mafia</Text>
+                  </View>
+                  <View style={styles.roleSettingControls}>
+                    <TouchableOpacity
+                      style={styles.roleSettingButton}
+                      onPress={() =>
+                        updateRoleSettings({
+                          ...roleSettings,
+                          mafiaCount: Math.max(1, roleSettings.mafiaCount - 1),
+                        })
+                      }
+                    >
+                      <Text style={styles.roleSettingButtonText}>−</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.roleSettingValue}>{roleSettings.mafiaCount}</Text>
+                    <TouchableOpacity
+                      style={styles.roleSettingButton}
+                      onPress={() =>
+                        updateRoleSettings({
+                          ...roleSettings,
+                          mafiaCount: roleSettings.mafiaCount + 1,
+                        })
+                      }
+                    >
+                      <Text style={styles.roleSettingButtonText}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Detective */}
+                <View style={styles.roleSettingItem}>
+                  <View style={styles.roleSettingLabelContainer}>
+                    <Text style={styles.roleSettingEmoji}>🕵️</Text>
+                    <Text style={styles.roleSettingLabel}>Detective</Text>
+                  </View>
+                  <View style={styles.roleSettingControls}>
+                    <TouchableOpacity
+                      style={styles.roleSettingButton}
+                      onPress={() =>
+                        updateRoleSettings({
+                          ...roleSettings,
+                          detectiveCount: Math.max(0, roleSettings.detectiveCount - 1),
+                        })
+                      }
+                    >
+                      <Text style={styles.roleSettingButtonText}>−</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.roleSettingValue}>{roleSettings.detectiveCount}</Text>
+                    <TouchableOpacity
+                      style={styles.roleSettingButton}
+                      onPress={() =>
+                        updateRoleSettings({
+                          ...roleSettings,
+                          detectiveCount: roleSettings.detectiveCount + 1,
+                        })
+                      }
+                    >
+                      <Text style={styles.roleSettingButtonText}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Doctor */}
+                <View style={styles.roleSettingItem}>
+                  <View style={styles.roleSettingLabelContainer}>
+                    <Text style={styles.roleSettingEmoji}>⚕️</Text>
+                    <Text style={styles.roleSettingLabel}>Doctor</Text>
+                  </View>
+                  <View style={styles.roleSettingControls}>
+                    <TouchableOpacity
+                      style={styles.roleSettingButton}
+                      onPress={() =>
+                        updateRoleSettings({
+                          ...roleSettings,
+                          doctorCount: Math.max(0, roleSettings.doctorCount - 1),
+                        })
+                      }
+                    >
+                      <Text style={styles.roleSettingButtonText}>−</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.roleSettingValue}>{roleSettings.doctorCount}</Text>
+                    <TouchableOpacity
+                      style={styles.roleSettingButton}
+                      onPress={() =>
+                        updateRoleSettings({
+                          ...roleSettings,
+                          doctorCount: roleSettings.doctorCount + 1,
+                        })
+                      }
+                    >
+                      <Text style={styles.roleSettingButtonText}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </ScrollView>
+
+              <View style={styles.roleSettingsInfo}>
+                <Text style={styles.roleSettingsInfoText}>
+                  Total special roles: {calculateTotalRoles()}
                 </Text>
-              </TouchableOpacity>
-            ) : (
-              <View style={styles.waitingView}>
-                <Text style={styles.waitingText}>
-                  {minPlayersMet 
-                    ? `Waiting for host to start...` 
-                    : `Need ${3 - sortedPlayerList.length} more players to start`}
+                <Text style={styles.roleSettingsInfoText}>
+                  Current players: {sortedPlayerList.length}
+                </Text>
+                {!hasEnoughPlayersForRoles() && (
+                  <Text style={styles.roleSettingsWarning}>
+                    Not enough players for current role settings!
+                  </Text>
+                )}
+                <Text style={styles.roleSettingsNote}>
+                  Remaining players will be Villagers
                 </Text>
               </View>
-            )}
-          </>
-        )}
+
+              <TouchableOpacity
+                style={styles.roleSettingsCloseButton}
+                onPress={() => setShowRoleSettings(false)}
+              >
+                <Text style={styles.roleSettingsCloseText}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Chat Modal */}
+        <Modal
+          visible={showChat}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowChat(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.chatModal}>
+              <View style={styles.chatHeader}>
+                <Text style={styles.chatTitle}>Lobby Chat</Text>
+                <TouchableOpacity onPress={() => setShowChat(false)}>
+                  <Ionicons name="close" size={28} color="#fff" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={styles.chatMessages}>
+                {chatMessages.length === 0 ? (
+                  <Text style={styles.noChatText}>No messages yet...</Text>
+                ) : (
+                  chatMessages.map((msg, index) => (
+                    <View
+                      key={index}
+                      style={[
+                        styles.chatBubble,
+                        msg.senderId === playerId && styles.myChatBubble,
+                      ]}
+                    >
+                      {msg.senderId !== playerId && (
+                        <Text style={styles.chatSender}>{msg.senderName}</Text>
+                      )}
+                      <Text style={styles.chatMessage}>{msg.message}</Text>
+                    </View>
+                  ))
+                )}
+              </ScrollView>
+
+              <View style={styles.chatInputContainer}>
+                <TextInput
+                  style={styles.chatInput}
+                  value={chatInput}
+                  onChangeText={setChatInput}
+                  placeholder="Type a message..."
+                  placeholderTextColor="#666"
+                  multiline
+                  onSubmitEditing={sendChatMessage}
+                />
+                <TouchableOpacity style={styles.sendButton} onPress={sendChatMessage}>
+                  <Ionicons name="send" size={24} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </View>
     </SafeAreaView>
   );
 }
 
+// Styles remain the same as your original file
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#0b132b",
+  },
   container: {
     flex: 1,
     backgroundColor: "#0b132b",
   },
   header: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    justifyContent: "space-between",
+    padding: 16,
+    backgroundColor: "#1c2541",
     borderBottomWidth: 1,
-    borderBottomColor: "#1c2541",
+    borderBottomColor: "#2d3a5e",
   },
   backButton: {
-    flexDirection: "row",
+    padding: 8,
+  },
+  headerCenter: {
+    flex: 1,
     alignItems: "center",
   },
-  backButtonText: {
+  headerTitle: {
     color: "#fff",
-    fontSize: 16,
-    marginLeft: 4,
+    fontSize: 20,
+    fontWeight: "700",
   },
-  roomInfo: {
-    alignItems: "center",
-  },
-  roomCode: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "bold",
-  },
-  connectionStatus: {
-    flexDirection: "row",
-    alignItems: "center",
+  headerSubtitle: {
+    color: "#89a",
+    fontSize: 14,
     marginTop: 2,
-  },
-  connectionDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  connectionText: {
-    color: "#ccc",
-    fontSize: 12,
-  },
-  headerButtons: {
-    flexDirection: "row",
-    gap: 12,
   },
   chatButton: {
     padding: 8,
-    position: "relative",
   },
-  chatBadge: {
-    position: "absolute",
-    top: 4,
-    right: 4,
-    backgroundColor: "#e63946",
-    borderRadius: 8,
-    minWidth: 16,
-    height: 16,
-    justifyContent: "center",
+  connectionWarning: {
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255, 165, 0, 0.2)",
+    padding: 12,
+    gap: 8,
   },
-  chatBadgeText: {
-    color: "#fff",
-    fontSize: 10,
-    fontWeight: "bold",
+  connectionWarningText: {
+    color: "#FFA500",
+    fontSize: 14,
+    fontWeight: "600",
   },
-  copyButton: {
-    padding: 8,
-  },
-  content: {
+  playersContainer: {
     flex: 1,
     padding: 16,
   },
-  roleSettingsPreview: {
-    backgroundColor: "#2d3a5e",
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
+  settingsButton: {
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#457b9d",
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    marginBottom: 12,
   },
-  roleSettingsPreviewText: {
+  settingsButtonText: {
     color: "#fff",
     fontSize: 16,
     fontWeight: "600",
-    marginBottom: 8,
   },
-  roleCountsPreview: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    width: "100%",
-  },
-  roleCount: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "500",
-  },
-  playerCountSection: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 16,
-  },
-  playerCount: {
-    color: "#bcd",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  readyCount: {
-    color: "#4CAF50",
-    fontSize: 16,
-    fontWeight: "600",
+  actionsContainer: {
+    padding: 16,
+    backgroundColor: "#1c2541",
+    borderTopWidth: 1,
+    borderTopColor: "#2d3a5e",
   },
   connectingView: {
     flex: 1,

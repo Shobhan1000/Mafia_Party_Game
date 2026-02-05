@@ -1,14 +1,14 @@
 import { useRouter } from "expo-router";
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
+  Alert,
+  ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
   View,
-  ScrollView,
-  Alert,
-  Switch,
 } from "react-native";
 
 const ROLES = [
@@ -20,8 +20,9 @@ const ROLES = [
 
 export default function RoleGenerator() {
   const router = useRouter();
-  const [phase, setPhase] = useState("setup"); // setup, distribution, timer
+  const [phase, setPhase] = useState("setup"); // setup, names, distribution, timer
   const [playerCount, setPlayerCount] = useState("5");
+  const [playerNames, setPlayerNames] = useState([]);
   const [enableTimer, setEnableTimer] = useState(false);
   const [timeLimit, setTimeLimit] = useState("5");
   const [players, setPlayers] = useState([]);
@@ -49,10 +50,31 @@ export default function RoleGenerator() {
     return () => clearInterval(interval);
   }, [timerActive, timeRemaining]);
 
-  const generateRoles = () => {
+  const proceedToNames = () => {
     const count = parseInt(playerCount);
     if (count < 3) {
       Alert.alert("Error", "Need at least 3 players");
+      return;
+    }
+    
+    // Initialize empty names array
+    setPlayerNames(Array(count).fill(""));
+    setPhase("names");
+  };
+
+  const updatePlayerName = (index, name) => {
+    const newNames = [...playerNames];
+    newNames[index] = name;
+    setPlayerNames(newNames);
+  };
+
+  const generateRoles = () => {
+    const count = parseInt(playerCount);
+    
+    // Validate all names are filled
+    const emptyNames = playerNames.filter(name => !name.trim());
+    if (emptyNames.length > 0) {
+      Alert.alert("Missing Names", "Please enter names for all players");
       return;
     }
 
@@ -79,7 +101,7 @@ export default function RoleGenerator() {
     setPlayers(
       shuffled.map((role, i) => ({
         id: i + 1,
-        name: `Player ${i + 1}`,
+        name: playerNames[i].trim(),
         role: role,
       }))
     );
@@ -168,9 +190,9 @@ export default function RoleGenerator() {
 
             <TouchableOpacity
               style={styles.primaryButton}
-              onPress={generateRoles}
+              onPress={proceedToNames}
             >
-              <Text style={styles.buttonText}>Generate Roles</Text>
+              <Text style={styles.buttonText}>Continue to Names</Text>
             </TouchableOpacity>
           </View>
 
@@ -183,6 +205,55 @@ export default function RoleGenerator() {
               • Perfect for experienced players{"\n"}
               • No game management - just roles!
             </Text>
+          </View>
+        </View>
+      </ScrollView>
+    );
+  }
+
+  // Player Names Phase
+  if (phase === "names") {
+    return (
+      <ScrollView contentContainerStyle={styles.scrollContainer}>
+        <View style={styles.container}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => setPhase("setup")}
+          >
+            <Text style={styles.backText}>← Back</Text>
+          </TouchableOpacity>
+
+          <Text style={styles.title}>Enter Player Names</Text>
+          <Text style={styles.subtitle}>
+            {playerNames.filter(n => n.trim()).length} of {playerCount} names entered
+          </Text>
+
+          <View style={styles.namesCard}>
+            {playerNames.map((name, index) => (
+              <View key={index} style={styles.nameInputGroup}>
+                <Text style={styles.nameLabel}>Player {index + 1}</Text>
+                <TextInput
+                  style={styles.input}
+                  value={name}
+                  onChangeText={(text) => updatePlayerName(index, text)}
+                  placeholder={`Enter name for Player ${index + 1}`}
+                  placeholderTextColor="#666"
+                  autoCapitalize="words"
+                  returnKeyType={index < playerNames.length - 1 ? "next" : "done"}
+                />
+              </View>
+            ))}
+
+            <TouchableOpacity 
+              style={[
+                styles.primaryButton,
+                playerNames.filter(n => n.trim()).length < playerNames.length && styles.disabledButton
+              ]} 
+              onPress={generateRoles}
+              disabled={playerNames.filter(n => n.trim()).length < playerNames.length}
+            >
+              <Text style={styles.buttonText}>Generate Roles</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </ScrollView>
@@ -407,6 +478,22 @@ const styles = StyleSheet.create({
     borderColor: "#2d3a5e",
     marginBottom: 20,
   },
+  namesCard: {
+    backgroundColor: "#1c2541",
+    borderRadius: 16,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: "#2d3a5e",
+  },
+  nameInputGroup: {
+    marginBottom: 16,
+  },
+  nameLabel: {
+    color: "#4ecdc4",
+    fontSize: 14,
+    fontWeight: "600",
+    marginBottom: 6,
+  },
   label: {
     color: "#fff",
     fontSize: 16,
@@ -435,6 +522,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: "center",
     marginTop: 24,
+  },
+  disabledButton: {
+    opacity: 0.5,
+    backgroundColor: "#666",
   },
   secondaryButton: {
     backgroundColor: "#457b9d",
