@@ -1,4 +1,5 @@
 import { useRouter } from "expo-router";
+import * as Speech from 'expo-speech';
 import { useEffect, useState } from "react";
 import {
   Alert,
@@ -46,6 +47,15 @@ export default function NarratorMode() {
   const [nightActions, setNightActions] = useState({});
   const [showNightActionModal, setShowNightActionModal] = useState(false);
   const [currentNightPlayer, setCurrentNightPlayer] = useState(null);
+  
+  // Audio narration
+  const [sound, setSound] = useState(null);
+  const [isNightSequenceActive, setIsNightSequenceActive] = useState(false);
+  const [currentNarration, setCurrentNarration] = useState("");
+  const [nightSequenceStep, setNightSequenceStep] = useState(0);
+  const [showPlayerSelection, setShowPlayerSelection] = useState(false);
+  const [currentRole, setCurrentRole] = useState(null);
+  const [countdownTimer, setCountdownTimer] = useState(0);
 
   // Timer effect
   useEffect(() => {
@@ -64,6 +74,194 @@ export default function NarratorMode() {
     }
     return () => clearInterval(interval);
   }, [timerActive, timeRemaining]);
+
+  // Countdown timer for night actions
+  useEffect(() => {
+    let interval;
+    if (countdownTimer > 0) {
+      interval = setInterval(() => {
+        setCountdownTimer((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [countdownTimer]);
+
+  // Text-to-speech function using expo-speech
+  const speak = async (text, onComplete) => {
+    try {
+      // Stop any ongoing speech
+      await Speech.stop();
+      
+      // Speak the text
+      Speech.speak(text, {
+        language: 'en-US',
+        pitch: 1.0,
+        rate: 0.85, // Slightly slower for clarity
+        onDone: () => {
+          if (onComplete) onComplete();
+        },
+        onStopped: () => {
+          if (onComplete) onComplete();
+        },
+        onError: (error) => {
+          console.error("Speech error:", error);
+          if (onComplete) onComplete();
+        }
+      });
+    } catch (error) {
+      console.error("Speech error:", error);
+      // Fallback to text-only
+      if (onComplete) onComplete();
+    }
+  };
+
+  // Automated night sequence
+  const startAutomatedNightSequence = async () => {
+    setIsNightSequenceActive(true);
+    setNightSequenceStep(0);
+    setNightActions({});
+    
+    // Sequence steps
+    const sequence = [];
+    
+    // 1. Everyone close eyes
+    sequence.push({
+      type: 'narration',
+      text: 'Night falls on the village. Everyone, close your eyes and go to sleep.',
+      duration: 3000
+    });
+
+    // 2. Mafia wake up
+    const mafiaPlayers = players.filter(p => p.alive && p.role.id === 'mafia');
+    if (mafiaPlayers.length > 0) {
+      sequence.push({
+        type: 'narration',
+        text: `Mafia, open your eyes and silently agree on someone to eliminate.`,
+        duration: 2000
+      });
+      
+      sequence.push({
+        type: 'action',
+        role: 'mafia',
+        text: 'Mafia, select your target.',
+        countdown: 10
+      });
+      
+      sequence.push({
+        type: 'narration',
+        text: 'Mafia, close your eyes.',
+        duration: 2000
+      });
+    }
+
+    // 3. Detective wake up
+    const detectivePlayers = players.filter(p => p.alive && p.role.id === 'detective');
+    if (detectivePlayers.length > 0) {
+      sequence.push({
+        type: 'narration',
+        text: 'Detective, open your eyes.',
+        duration: 2000
+      });
+      
+      sequence.push({
+        type: 'action',
+        role: 'detective',
+        text: 'Detective, choose someone to investigate.',
+        countdown: 8
+      });
+      
+      sequence.push({
+        type: 'narration',
+        text: 'Detective, close your eyes.',
+        duration: 2000
+      });
+    }
+
+    // 4. Doctor wake up
+    const doctorPlayers = players.filter(p => p.alive && p.role.id === 'doctor');
+    if (doctorPlayers.length > 0) {
+      sequence.push({
+        type: 'narration',
+        text: 'Doctor, open your eyes.',
+        duration: 2000
+      });
+      
+      sequence.push({
+        type: 'action',
+        role: 'doctor',
+        text: 'Doctor, choose someone to save.',
+        countdown: 8
+      });
+      
+      sequence.push({
+        type: 'narration',
+        text: 'Doctor, close your eyes.',
+        duration: 2000
+      });
+    }
+
+    // 5. Morning
+    sequence.push({
+      type: 'narration',
+      text: 'The sun rises. Everyone, open your eyes.',
+      duration: 2000
+    });
+
+    // Execute sequence
+    executeNightSequence(sequence, 0);
+  };
+
+  const executeNightSequence = async (sequence, stepIndex) => {
+    if (stepIndex >= sequence.length) {
+      // Sequence complete, process results
+      setIsNightSequenceActive(false);
+      processNightActions();
+      return;
+    }
+
+    const step = sequence[stepIndex];
+    setNightSequenceStep(stepIndex);
+    
+    if (step.type === 'narration') {
+      setCurrentNarration(step.text);
+      speak(step.text, () => {
+        setTimeout(() => {
+          executeNightSequence(sequence, stepIndex + 1);
+        }, step.duration);
+      });
+    } else if (step.type === 'action') {
+      setCurrentNarration(step.text);
+      setCurrentRole(step.role);
+      setCountdownTimer(step.countdown);
+      setShowPlayerSelection(true);
+      
+      speak(step.text);
+      
+      // Auto-continue after countdown (or when action is taken)
+      setTimeout(() => {
+        setShowPlayerSelection(false);
+        setCurrentRole(null);
+        executeNightSequence(sequence, stepIndex + 1);
+      }, step.countdown * 1000);
+    }
+  };
+
+  const selectNightTarget = (targetId, role) => {
+    // Record the action
+    setNightActions(prev => ({
+      ...prev,
+      [role]: {
+        role: role,
+        targetId: targetId,
+        targetName: players.find(p => p.id === targetId)?.name
+      }
+    }));
+    
+    // Clear selection UI
+    setShowPlayerSelection(false);
+    setCurrentRole(null);
+    setCountdownTimer(0);
+  };
 
   const addLog = (message) => {
     setGameLog((prev) => [...prev, { message, time: new Date().toLocaleTimeString() }]);
@@ -166,11 +364,8 @@ export default function NarratorMode() {
     addLog(`🌙 Night ${currentRound} begins`);
     
     if (killMode) {
-      Alert.alert(
-        "Night Phase",
-        "Players with special roles should now take their actions privately. Pass the device to each player when it's their turn.",
-        [{ text: "OK" }]
-      );
+      // Start automated night sequence with audio
+      startAutomatedNightSequence();
     }
   };
 
@@ -214,15 +409,13 @@ export default function NarratorMode() {
       const kills = new Set();
       const saves = new Set();
       
-      // Process mafia kills
-      Object.values(nightActions).forEach(action => {
-        if (action.actorRole === "mafia") {
-          kills.add(action.targetId);
-        }
-        if (action.actorRole === "doctor") {
-          saves.add(action.targetId);
-        }
-      });
+      // Process actions
+      if (nightActions.mafia) {
+        kills.add(nightActions.mafia.targetId);
+      }
+      if (nightActions.doctor) {
+        saves.add(nightActions.doctor.targetId);
+      }
       
       // Apply kills (excluding saved players)
       const actuallyKilled = [];
@@ -241,22 +434,36 @@ export default function NarratorMode() {
       
       if (actuallyKilled.length > 0) {
         addLog(`💀 ${actuallyKilled.join(", ")} eliminated during the night`);
+        setTimeout(() => {
+          Alert.alert(
+            "Night Results",
+            `${actuallyKilled.join(", ")} was eliminated during the night.`,
+            [{ text: "Continue" }]
+          );
+        }, 500);
       } else {
         addLog("😇 No one was killed last night");
+        setTimeout(() => {
+          Alert.alert(
+            "Night Results",
+            "No one was killed last night!",
+            [{ text: "Continue" }]
+          );
+        }, 500);
       }
       
       // Show detective results if any
-      Object.values(nightActions).forEach(action => {
-        if (action.actorRole === "detective") {
-          const target = players.find(p => p.id === action.targetId);
-          const isMafia = target?.role.id === "mafia";
+      if (nightActions.detective) {
+        const target = players.find(p => p.id === nightActions.detective.targetId);
+        const isMafia = target?.role.id === "mafia";
+        setTimeout(() => {
           Alert.alert(
-            "Detective Report",
-            `${action.actorName} investigated ${action.targetName}.\n\nResult: ${isMafia ? "🕶️ MAFIA" : "✅ INNOCENT"}`,
+            "🕵️ Detective Report",
+            `You investigated ${nightActions.detective.targetName}.\n\nResult: ${isMafia ? "🕶️ This person is MAFIA!" : "✅ This person is INNOCENT."}`,
             [{ text: "OK" }]
           );
-        }
-      });
+        }, 1500);
+      }
     }
     
     setNightActions({});
@@ -653,33 +860,19 @@ export default function NarratorMode() {
             <>
               {killMode ? (
                 <>
-                  <Text style={styles.nightModeTitle}>Night Actions</Text>
-                  <Text style={styles.nightModeInstructions}>
-                    Pass device to players with special roles (Mafia, Detective, Doctor)
-                  </Text>
-                  <View style={styles.nightPlayersList}>
-                    {players.filter(p => p.alive && p.role.id !== "villager").map((player) => (
-                      <TouchableOpacity
-                        key={player.id}
-                        style={[
-                          styles.nightPlayerButton,
-                          nightActions[player.id] && styles.nightPlayerButtonComplete
-                        ]}
-                        onPress={() => openNightAction(player)}
-                      >
-                        <Text style={styles.nightPlayerName}>{player.name}</Text>
-                        <Text style={styles.nightPlayerRole}>
-                          {nightActions[player.id] ? "✓ Action Taken" : "Tap to Take Action"}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                  <TouchableOpacity
-                    style={styles.primaryButton}
-                    onPress={processNightActions}
-                  >
-                    <Text style={styles.buttonText}>☀️ Process Night & Start Day</Text>
-                  </TouchableOpacity>
+                  {!isNightSequenceActive ? (
+                    <TouchableOpacity
+                      style={styles.primaryButton}
+                      onPress={startNightPhase}
+                    >
+                      <Text style={styles.buttonText}>🌙 Begin Automated Night Sequence</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <View style={styles.nightSequenceInfo}>
+                      <Text style={styles.nightSequenceText}>Night sequence in progress...</Text>
+                      <Text style={styles.nightSequenceSubtext}>Follow the voice instructions</Text>
+                    </View>
+                  )}
                 </>
               ) : (
                 <TouchableOpacity
@@ -744,53 +937,54 @@ export default function NarratorMode() {
 
         {/* Night Action Modal */}
         <Modal
-          visible={showNightActionModal}
-          transparent
-          animationType="slide"
-          onRequestClose={() => setShowNightActionModal(false)}
+          visible={isNightSequenceActive}
+          transparent={false}
+          animationType="fade"
         >
-          <View style={styles.modalOverlay}>
-            <View style={styles.nightActionModal}>
-              {currentNightPlayer && (
-                <>
-                  <Text style={styles.nightActionTitle}>
-                    {currentNightPlayer.role.emoji} {currentNightPlayer.name}
-                  </Text>
-                  <Text style={styles.nightActionRole}>
-                    {currentNightPlayer.role.name}
+          <View style={styles.narrationOverlay}>
+            <View style={styles.narrationContent}>
+              <Text style={styles.narrationText}>{currentNarration}</Text>
+              
+              {countdownTimer > 0 && (
+                <Text style={styles.countdownText}>{countdownTimer}s</Text>
+              )}
+              
+              {showPlayerSelection && currentRole && (
+                <View style={styles.playerSelectionContainer}>
+                  <Text style={styles.selectionTitle}>
+                    {currentRole === 'mafia' && '🕶️ Select target to eliminate'}
+                    {currentRole === 'detective' && '🕵️ Select player to investigate'}
+                    {currentRole === 'doctor' && '⚕️ Select player to save'}
                   </Text>
                   
-                  <Text style={styles.nightActionInstructions}>
-                    {currentNightPlayer.role.id === "mafia" && "Choose a player to eliminate:"}
-                    {currentNightPlayer.role.id === "detective" && "Choose a player to investigate:"}
-                    {currentNightPlayer.role.id === "doctor" && "Choose a player to save:"}
-                  </Text>
-
-                  <ScrollView style={styles.nightActionTargets}>
+                  <ScrollView style={styles.playerSelectionScroll}>
                     {players
-                      .filter(p => p.alive && p.id !== currentNightPlayer.id)
+                      .filter(p => p.alive)
                       .map((player) => (
                         <TouchableOpacity
                           key={player.id}
-                          style={styles.nightActionTarget}
-                          onPress={() => submitNightAction(player.id)}
+                          style={[
+                            styles.playerSelectionButton,
+                            nightActions[currentRole]?.targetId === player.id && styles.playerSelectionButtonSelected
+                          ]}
+                          onPress={() => selectNightTarget(player.id, currentRole)}
                         >
-                          <Text style={styles.nightActionTargetName}>{player.name}</Text>
-                          <Text style={styles.nightActionTargetArrow}>→</Text>
+                          <Text style={styles.playerSelectionName}>{player.name}</Text>
+                          {nightActions[currentRole]?.targetId === player.id && (
+                            <Text style={styles.playerSelectionCheck}>✓</Text>
+                          )}
                         </TouchableOpacity>
                       ))}
                   </ScrollView>
-
-                  <TouchableOpacity
-                    style={styles.nightActionCancel}
-                    onPress={() => {
-                      setShowNightActionModal(false);
-                      setCurrentNightPlayer(null);
-                    }}
-                  >
-                    <Text style={styles.nightActionCancelText}>Cancel</Text>
-                  </TouchableOpacity>
-                </>
+                </View>
+              )}
+              
+              {!showPlayerSelection && (
+                <View style={styles.narrationInstructions}>
+                  <Text style={styles.instructionText}>
+                    🔇 Listen to the narrator
+                  </Text>
+                </View>
               )}
             </View>
           </View>
@@ -1171,98 +1365,93 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     lineHeight: 20,
   },
-  nightPlayersList: {
-    gap: 10,
-    marginBottom: 20,
-  },
-  nightPlayerButton: {
+  nightSequenceInfo: {
     backgroundColor: "#1c2541",
     borderRadius: 12,
-    padding: 16,
-    borderWidth: 2,
-    borderColor: "#2d3a5e",
-  },
-  nightPlayerButtonComplete: {
-    borderColor: "#4CAF50",
-    backgroundColor: "rgba(76, 175, 80, 0.1)",
-  },
-  nightPlayerName: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "600",
-    marginBottom: 4,
-  },
-  nightPlayerRole: {
-    color: "#4ecdc4",
-    fontSize: 14,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.9)",
-    justifyContent: "center",
-    alignItems: "center",
     padding: 20,
+    alignItems: "center",
   },
-  nightActionModal: {
-    backgroundColor: "#1c2541",
-    borderRadius: 20,
-    width: "100%",
-    maxWidth: 400,
-    maxHeight: "80%",
-    padding: 24,
-  },
-  nightActionTitle: {
-    color: "#fff",
-    fontSize: 28,
-    fontWeight: "800",
-    textAlign: "center",
+  nightSequenceText: {
+    color: "#4ecdc4",
+    fontSize: 18,
+    fontWeight: "700",
     marginBottom: 8,
   },
-  nightActionRole: {
-    color: "#4ecdc4",
+  nightSequenceSubtext: {
+    color: "#89a",
+    fontSize: 14,
+  },
+  narrationOverlay: {
+    flex: 1,
+    backgroundColor: "#000",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  narrationContent: {
+    width: "100%",
+    padding: 40,
+    alignItems: "center",
+  },
+  narrationText: {
+    color: "#fff",
+    fontSize: 32,
+    fontWeight: "700",
+    textAlign: "center",
+    marginBottom: 30,
+    lineHeight: 44,
+  },
+  countdownText: {
+    color: "#e63946",
+    fontSize: 72,
+    fontWeight: "800",
+    marginVertical: 20,
+  },
+  narrationInstructions: {
+    marginTop: 40,
+  },
+  instructionText: {
+    color: "#89a",
     fontSize: 18,
     textAlign: "center",
-    marginBottom: 24,
   },
-  nightActionInstructions: {
-    color: "#89a",
-    fontSize: 16,
+  playerSelectionContainer: {
+    width: "100%",
+    maxWidth: 500,
+    marginTop: 20,
+  },
+  selectionTitle: {
+    color: "#4ecdc4",
+    fontSize: 20,
+    fontWeight: "700",
     textAlign: "center",
     marginBottom: 20,
-    lineHeight: 24,
   },
-  nightActionTargets: {
-    maxHeight: 300,
-    marginBottom: 20,
+  playerSelectionScroll: {
+    maxHeight: 400,
   },
-  nightActionTarget: {
-    backgroundColor: "#2d3a5e",
+  playerSelectionButton: {
+    backgroundColor: "#1c2541",
     borderRadius: 12,
-    padding: 16,
-    marginBottom: 10,
+    padding: 20,
+    marginBottom: 12,
+    borderWidth: 3,
+    borderColor: "#2d3a5e",
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
   },
-  nightActionTargetName: {
+  playerSelectionButtonSelected: {
+    borderColor: "#4CAF50",
+    backgroundColor: "rgba(76, 175, 80, 0.2)",
+  },
+  playerSelectionName: {
     color: "#fff",
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: "600",
   },
-  nightActionTargetArrow: {
-    color: "#e63946",
-    fontSize: 24,
+  playerSelectionCheck: {
+    color: "#4CAF50",
+    fontSize: 32,
     fontWeight: "bold",
-  },
-  nightActionCancel: {
-    backgroundColor: "#457b9d",
-    borderRadius: 12,
-    padding: 16,
-    alignItems: "center",
-  },
-  nightActionCancelText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
   },
 });

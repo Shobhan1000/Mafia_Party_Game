@@ -31,6 +31,13 @@ export default function RoleGenerator() {
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [timerActive, setTimerActive] = useState(false);
   const [timerMode, setTimerMode] = useState("discussion"); // discussion, voting
+  
+  // Role configuration state - structured like narrator.js to fix the undefined error
+  const [roleConfig, setRoleConfig] = useState({
+    mafia: 1,
+    detective: 1,
+    doctor: 1,
+  });
 
   // Timer effect
   useEffect(() => {
@@ -40,7 +47,10 @@ export default function RoleGenerator() {
         setTimeRemaining((prev) => {
           if (prev <= 1) {
             setTimerActive(false);
-            Alert.alert("Time's Up!", `${timerMode === "discussion" ? "Discussion" : "Voting"} time has ended`);
+            Alert.alert(
+              "Time's Up!", 
+              `${timerMode === "discussion" ? "Discussion" : "Voting"} time has ended`
+            );
             return 0;
           }
           return prev - 1;
@@ -52,12 +62,21 @@ export default function RoleGenerator() {
 
   const proceedToNames = () => {
     const count = parseInt(playerCount);
-    if (count < 3) {
+    const totalSpecial = roleConfig.mafia + roleConfig.detective + roleConfig.doctor;
+
+    if (isNaN(count) || count < 3) {
       Alert.alert("Error", "Need at least 3 players");
       return;
     }
-    
-    // Initialize empty names array
+
+    if (totalSpecial > count) {
+      Alert.alert(
+        "Too Many Roles",
+        `You have ${count} players but selected ${totalSpecial} special roles.`
+      );
+      return;
+    }
+
     setPlayerNames(Array(count).fill(""));
     setPhase("names");
   };
@@ -70,32 +89,33 @@ export default function RoleGenerator() {
 
   const generateRoles = () => {
     const count = parseInt(playerCount);
-    
-    // Validate all names are filled
+
+    // Validate names
     const emptyNames = playerNames.filter(name => !name.trim());
     if (emptyNames.length > 0) {
       Alert.alert("Missing Names", "Please enter names for all players");
       return;
     }
 
-    const numMafia = Math.floor(count / 3);
     const roles = [];
 
-    // Add mafia
-    for (let i = 0; i < numMafia; i++) {
+    // Add roles based on roleConfig
+    for (let i = 0; i < roleConfig.mafia; i++) {
       roles.push(ROLES.find((r) => r.id === "mafia"));
     }
+    for (let i = 0; i < roleConfig.detective; i++) {
+      roles.push(ROLES.find((r) => r.id === "detective"));
+    }
+    for (let i = 0; i < roleConfig.doctor; i++) {
+      roles.push(ROLES.find((r) => r.id === "doctor"));
+    }
 
-    // Add special roles
-    if (count >= 5) roles.push(ROLES.find((r) => r.id === "detective"));
-    if (count >= 7) roles.push(ROLES.find((r) => r.id === "doctor"));
-
-    // Fill with villagers
+    // Fill rest with villagers
     while (roles.length < count) {
       roles.push(ROLES.find((r) => r.id === "villager"));
     }
 
-    // Shuffle
+    // Shuffle roles
     const shuffled = roles.sort(() => Math.random() - 0.5);
 
     setPlayers(
@@ -105,6 +125,7 @@ export default function RoleGenerator() {
         role: role,
       }))
     );
+
     setPhase("distribution");
   };
 
@@ -163,6 +184,77 @@ export default function RoleGenerator() {
               placeholder="5"
               placeholderTextColor="#666"
             />
+            
+            <Text style={styles.sectionTitle}>Customize Roles</Text>
+            
+            {/* Mafia Selector */}
+            <View style={styles.roleConfigItem}>
+              <View style={styles.roleConfigLabel}>
+                <Text style={styles.roleEmojiSmall}>🕶️</Text>
+                <Text style={styles.roleConfigText}>Mafia</Text>
+              </View>
+              <View style={styles.roleConfigControls}>
+                <TouchableOpacity
+                  style={styles.roleConfigButton}
+                  onPress={() => setRoleConfig(prev => ({ ...prev, mafia: Math.max(1, prev.mafia - 1) }))}
+                >
+                  <Text style={styles.roleConfigButtonText}>−</Text>
+                </TouchableOpacity>
+                <Text style={styles.roleConfigValue}>{roleConfig.mafia}</Text>
+                <TouchableOpacity
+                  style={styles.roleConfigButton}
+                  onPress={() => setRoleConfig(prev => ({ ...prev, mafia: prev.mafia + 1 }))}
+                >
+                  <Text style={styles.roleConfigButtonText}>+</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Detective Selector */}
+            <View style={styles.roleConfigItem}>
+              <View style={styles.roleConfigLabel}>
+                <Text style={styles.roleEmojiSmall}>🕵️</Text>
+                <Text style={styles.roleConfigText}>Detective</Text>
+              </View>
+              <View style={styles.roleConfigControls}>
+                <TouchableOpacity
+                  style={styles.roleConfigButton}
+                  onPress={() => setRoleConfig(prev => ({ ...prev, detective: Math.max(0, prev.detective - 1) }))}
+                >
+                  <Text style={styles.roleConfigButtonText}>−</Text>
+                </TouchableOpacity>
+                <Text style={styles.roleConfigValue}>{roleConfig.detective}</Text>
+                <TouchableOpacity
+                  style={styles.roleConfigButton}
+                  onPress={() => setRoleConfig(prev => ({ ...prev, detective: prev.detective + 1 }))}
+                >
+                  <Text style={styles.roleConfigButtonText}>+</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Doctor Selector */}
+            <View style={styles.roleConfigItem}>
+              <View style={styles.roleConfigLabel}>
+                <Text style={styles.roleEmojiSmall}>⚕️</Text>
+                <Text style={styles.roleConfigText}>Doctor</Text>
+              </View>
+              <View style={styles.roleConfigControls}>
+                <TouchableOpacity
+                  style={styles.roleConfigButton}
+                  onPress={() => setRoleConfig(prev => ({ ...prev, doctor: Math.max(0, prev.doctor - 1) }))}
+                >
+                  <Text style={styles.roleConfigButtonText}>−</Text>
+                </TouchableOpacity>
+                <Text style={styles.roleConfigValue}>{roleConfig.doctor}</Text>
+                <TouchableOpacity
+                  style={styles.roleConfigButton}
+                  onPress={() => setRoleConfig(prev => ({ ...prev, doctor: prev.doctor + 1 }))}
+                >
+                  <Text style={styles.roleConfigButtonText}>+</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
 
             <View style={styles.switchContainer}>
               <Text style={styles.label}>Enable Discussion Timer</Text>
@@ -239,7 +331,6 @@ export default function RoleGenerator() {
                   placeholder={`Enter name for Player ${index + 1}`}
                   placeholderTextColor="#666"
                   autoCapitalize="words"
-                  returnKeyType={index < playerNames.length - 1 ? "next" : "done"}
                 />
               </View>
             ))}
@@ -260,7 +351,7 @@ export default function RoleGenerator() {
     );
   }
 
-  // Role Distribution Phase
+  // Distribution Phase
   if (phase === "distribution") {
     const currentPlayer = players[currentPlayerIndex];
     return (
@@ -303,28 +394,22 @@ export default function RoleGenerator() {
                 <Text style={styles.buttonText}>
                   {currentPlayerIndex < players.length - 1
                     ? "Next Player"
-                    : enableTimer
-                    ? "Continue to Timer"
-                    : "Finish"}
+                    : "Finish Setup"}
                 </Text>
               </TouchableOpacity>
             </>
           )}
         </View>
-
+        
         <View style={styles.progressContainer}>
-          <Text style={styles.progressText}>
+           <Text style={styles.progressText}>
             {currentPlayerIndex + 1} / {players.length} players
           </Text>
           <View style={styles.progressBar}>
             <View
               style={[
                 styles.progressFill,
-                {
-                  width: `${
-                    ((currentPlayerIndex + 1) / players.length) * 100
-                  }%`,
-                },
+                { width: `${((currentPlayerIndex + 1) / players.length) * 100}%` },
               ]}
             />
           </View>
@@ -411,22 +496,9 @@ export default function RoleGenerator() {
 
           <TouchableOpacity
             style={styles.secondaryButton}
-            onPress={() => {
-              Alert.alert(
-                "End Session",
-                "Are you sure you want to finish?",
-                [
-                  { text: "Cancel", style: "cancel" },
-                  {
-                    text: "Finish",
-                    onPress: () => router.back(),
-                    style: "destructive",
-                  },
-                ]
-              );
-            }}
+            onPress={() => router.back()}
           >
-            <Text style={styles.buttonText}>Finish</Text>
+            <Text style={styles.buttonText}>End Game</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -435,9 +507,7 @@ export default function RoleGenerator() {
 }
 
 const styles = StyleSheet.create({
-  scrollContainer: {
-    flexGrow: 1,
-  },
+  scrollContainer: { flexGrow: 1 },
   container: {
     flex: 1,
     padding: 24,
@@ -446,17 +516,12 @@ const styles = StyleSheet.create({
   },
   backButton: {
     alignSelf: "flex-start",
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    padding: 10,
     backgroundColor: "rgba(255, 255, 255, 0.1)",
     borderRadius: 8,
     marginBottom: 16,
   },
-  backText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
+  backText: { color: "#fff", fontWeight: "600" },
   title: {
     color: "#fff",
     fontSize: 32,
@@ -464,12 +529,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 8,
   },
-  subtitle: {
-    color: "#bcd",
-    fontSize: 16,
-    textAlign: "center",
-    marginBottom: 24,
-  },
+  subtitle: { color: "#bcd", fontSize: 16, textAlign: "center", marginBottom: 24 },
   setupCard: {
     backgroundColor: "#1c2541",
     borderRadius: 16,
@@ -478,29 +538,43 @@ const styles = StyleSheet.create({
     borderColor: "#2d3a5e",
     marginBottom: 20,
   },
-  namesCard: {
-    backgroundColor: "#1c2541",
-    borderRadius: 16,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: "#2d3a5e",
-  },
-  nameInputGroup: {
-    marginBottom: 16,
-  },
-  nameLabel: {
+  sectionTitle: {
     color: "#4ecdc4",
-    fontSize: 14,
-    fontWeight: "600",
-    marginBottom: 6,
+    fontSize: 18,
+    fontWeight: "700",
+    marginTop: 20,
+    marginBottom: 10,
   },
-  label: {
+  roleConfigItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#2d3a5e",
+  },
+  roleConfigLabel: { flexDirection: "row", alignItems: "center" },
+  roleEmojiSmall: { fontSize: 24, marginRight: 10 },
+  roleConfigText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  roleConfigControls: { flexDirection: "row", alignItems: "center" },
+  roleConfigButton: {
+    backgroundColor: "#e63946", // Color matched to narrator.js primary action
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  roleConfigButtonText: { color: "#fff", fontSize: 20, fontWeight: "bold" },
+  roleConfigValue: {
     color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-    marginTop: 16,
-    marginBottom: 8,
+    fontSize: 20,
+    fontWeight: "bold",
+    minWidth: 25,
+    textAlign: "center",
+    marginHorizontal: 15,
   },
+  label: { color: "#fff", fontSize: 16, fontWeight: "600", marginTop: 16, marginBottom: 8 },
   input: {
     backgroundColor: "#2d3a5e",
     borderRadius: 12,
@@ -523,14 +597,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 24,
   },
-  disabledButton: {
-    opacity: 0.5,
-    backgroundColor: "#666",
-  },
   secondaryButton: {
     backgroundColor: "#457b9d",
     paddingVertical: 16,
-    paddingHorizontal: 24,
+    borderRadius: 12,
+    alignItems: "center",
+    marginTop: 12,
+  },
+  dangerButton: {
+    backgroundColor: "#dc2626",
+    paddingVertical: 16,
     borderRadius: 12,
     alignItems: "center",
     marginTop: 12,
@@ -539,44 +615,23 @@ const styles = StyleSheet.create({
   voteButton: {
     backgroundColor: "#4CAF50",
     paddingVertical: 16,
-    paddingHorizontal: 24,
     borderRadius: 12,
     alignItems: "center",
     marginTop: 12,
-    flex: 1,
   },
-  dangerButton: {
-    backgroundColor: "#dc2626",
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    alignItems: "center",
-    marginTop: 12,
-    flex: 1,
-  },
-  buttonText: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "700",
-  },
+  buttonText: { color: "#fff", fontSize: 18, fontWeight: "700" },
+  disabledButton: { opacity: 0.5 },
   infoCard: {
     backgroundColor: "rgba(76, 175, 80, 0.1)",
     borderRadius: 12,
     padding: 20,
-    borderWidth: 1,
-    borderColor: "rgba(76, 175, 80, 0.3)",
+    marginTop: 20,
   },
-  infoTitle: {
-    color: "#4CAF50",
-    fontSize: 18,
-    fontWeight: "700",
-    marginBottom: 12,
-  },
-  infoText: {
-    color: "#89a",
-    fontSize: 14,
-    lineHeight: 22,
-  },
+  infoTitle: { color: "#4CAF50", fontSize: 18, fontWeight: "700", marginBottom: 8 },
+  infoText: { color: "#89a", fontSize: 14, lineHeight: 22 },
+  namesCard: { backgroundColor: "#1c2541", borderRadius: 16, padding: 24 },
+  nameInputGroup: { marginBottom: 16 },
+  nameLabel: { color: "#4ecdc4", marginBottom: 6 },
   roleCard: {
     flex: 1,
     justifyContent: "center",
@@ -584,59 +639,17 @@ const styles = StyleSheet.create({
     backgroundColor: "#1c2541",
     borderRadius: 20,
     padding: 32,
-    margin: 20,
+    marginVertical: 40,
   },
-  roleEmoji: {
-    fontSize: 80,
-    marginBottom: 20,
-  },
-  roleCardTitle: {
-    color: "#bcd",
-    fontSize: 20,
-    marginBottom: 8,
-  },
-  roleName: {
-    color: "#fff",
-    fontSize: 36,
-    fontWeight: "800",
-    marginBottom: 16,
-  },
-  roleCardText: {
-    color: "#89a",
-    fontSize: 16,
-    textAlign: "center",
-    lineHeight: 24,
-    marginBottom: 24,
-  },
-  separator: {
-    width: "80%",
-    height: 1,
-    backgroundColor: "#2d3a5e",
-    marginVertical: 16,
-  },
-  progressContainer: {
-    position: "absolute",
-    bottom: 40,
-    left: 24,
-    right: 24,
-  },
-  progressText: {
-    color: "#89a",
-    fontSize: 14,
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  progressBar: {
-    height: 8,
-    backgroundColor: "#2d3a5e",
-    borderRadius: 4,
-    overflow: "hidden",
-  },
-  progressFill: {
-    height: "100%",
-    backgroundColor: "#4CAF50",
-    borderRadius: 4,
-  },
+  roleEmoji: { fontSize: 80, marginBottom: 20 },
+  roleCardTitle: { color: "#bcd", fontSize: 20, marginBottom: 8 },
+  roleName: { color: "#fff", fontSize: 36, fontWeight: "800", marginBottom: 16 },
+  roleCardText: { color: "#89a", fontSize: 16, textAlign: "center", lineHeight: 24 },
+  separator: { width: "80%", height: 1, backgroundColor: "#2d3a5e", marginVertical: 16 },
+  progressContainer: { marginTop: 20 },
+  progressText: { color: "#89a", textAlign: "center", marginBottom: 8 },
+  progressBar: { height: 8, backgroundColor: "#2d3a5e", borderRadius: 4, overflow: "hidden" },
+  progressFill: { height: "100%", backgroundColor: "#4CAF50" },
   timerDisplay: {
     backgroundColor: "#1c2541",
     borderRadius: 20,
@@ -644,41 +657,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 24,
   },
-  timerModeText: {
-    color: "#4ecdc4",
-    fontSize: 20,
-    fontWeight: "700",
-    marginBottom: 16,
-  },
-  timerText: {
-    color: "#4ecdc4",
-    fontSize: 64,
-    fontWeight: "800",
-    marginBottom: 24,
-  },
-  timerWarning: {
-    color: "#e63946",
-  },
-  timerIdleText: {
-    color: "#fff",
-    fontSize: 32,
-    fontWeight: "700",
-    marginBottom: 8,
-  },
-  timerSubtext: {
-    color: "#89a",
-    fontSize: 16,
-    marginBottom: 24,
-  },
-  timerButtons: {
-    flexDirection: "row",
-    gap: 12,
-    width: "100%",
-  },
-  timerStartButtons: {
-    width: "100%",
-    gap: 12,
-  },
+  timerModeText: { color: "#4ecdc4", fontSize: 20, fontWeight: "700", marginBottom: 16 },
+  timerText: { color: "#4ecdc4", fontSize: 64, fontWeight: "800", marginBottom: 24 },
+  timerWarning: { color: "#e63946" },
+  timerIdleText: { color: "#fff", fontSize: 32, fontWeight: "700" },
+  timerSubtext: { color: "#89a", fontSize: 16, marginBottom: 24 },
+  timerButtons: { flexDirection: "row", gap: 12 },
+  timerStartButtons: { width: "100%", gap: 12 },
   rolesCard: {
     backgroundColor: "#1c2541",
     borderRadius: 12,
@@ -686,14 +671,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     alignItems: "center",
   },
-  rolesTitle: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "700",
-    marginBottom: 8,
-  },
-  rolesSubtext: {
-    color: "#89a",
-    fontSize: 14,
-  },
+  rolesTitle: { color: "#fff", fontSize: 18, fontWeight: "700", marginBottom: 8 },
+  rolesSubtext: { color: "#89a" },
 });
