@@ -1,3 +1,10 @@
+//------LIST OF THINGS TO FIX/ADD:---------//
+// - Fix the limits on the roles so it doesn't allow more special roles than players
+// - Make it so that mafia cannot select themselves as a target and detective cannot select themselves for investigation and doctor cannot select themselves for saving
+// - Give the rules from wikipedia so that the game can end as it should when all mafia are eliminated or when mafia equal or outnumber town
+// - Get rid of the game log at the bottom of the screen
+// - Implement the same voting system as in the generator mode and don't show the players roles when voting
+
 import { useRouter } from "expo-router";
 import * as Speech from 'expo-speech';
 import { useEffect, useState } from "react";

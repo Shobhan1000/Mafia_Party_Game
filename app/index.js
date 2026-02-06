@@ -7,7 +7,7 @@ export default function Home() {
   return (
     <ScrollView contentContainerStyle={styles.scrollContainer}>
       <View style={styles.container}>
-        <Text style={styles.title}>🎭 Mafia Party</Text>
+        <Text style={styles.title}>🎭 Mafia</Text>
         <Text style={styles.subtitle}>Choose Your Game Mode</Text>
 
         <View style={styles.modeContainer}>

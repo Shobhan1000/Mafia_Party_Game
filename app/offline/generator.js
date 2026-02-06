@@ -2,6 +2,7 @@ import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   Alert,
+  Modal,
   ScrollView,
   StyleSheet,
   Switch,
@@ -20,7 +21,7 @@ const ROLES = [
 
 export default function RoleGenerator() {
   const router = useRouter();
-  const [phase, setPhase] = useState("setup"); // setup, names, distribution, timer
+  const [phase, setPhase] = useState("setup"); // setup, names, distribution, timer, gameOver
   const [playerCount, setPlayerCount] = useState("5");
   const [playerNames, setPlayerNames] = useState([]);
   const [enableTimer, setEnableTimer] = useState(false);
@@ -30,14 +31,21 @@ export default function RoleGenerator() {
   const [showRole, setShowRole] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [timerActive, setTimerActive] = useState(false);
-  const [timerMode, setTimerMode] = useState("discussion"); // discussion, voting
+  const [timerMode, setTimerMode] = useState("discussion");
+  const [gameResult, setGameResult] = useState({ winner: "", message: "" });
   
-  // Role configuration state - structured like narrator.js to fix the undefined error
+  // Role configuration state
   const [roleConfig, setRoleConfig] = useState({
     mafia: 1,
     detective: 1,
     doctor: 1,
   });
+  
+  // Voting state
+  const [showVotingModal, setShowVotingModal] = useState(false);
+  const [votes, setVotes] = useState({});
+  const [currentVoterIndex, setCurrentVoterIndex] = useState(0);
+  const [votingComplete, setVotingComplete] = useState(false);
 
   // Timer effect
   useEffect(() => {
@@ -59,6 +67,21 @@ export default function RoleGenerator() {
     }
     return () => clearInterval(interval);
   }, [timerActive, timeRemaining]);
+
+  // COMPLETE RESET FUNCTION
+  const resetGame = () => {
+    setPhase("setup");
+    setPlayers([]);
+    setPlayerNames([]);
+    setVotes({});
+    setCurrentVoterIndex(0);
+    setCurrentPlayerIndex(0);
+    setShowRole(false);
+    setVotingComplete(false);
+    setTimerActive(false);
+    setTimeRemaining(0);
+    setGameResult({ winner: "", message: "" });
+  };
 
   const proceedToNames = () => {
     const count = parseInt(playerCount);
@@ -123,6 +146,7 @@ export default function RoleGenerator() {
         id: i + 1,
         name: playerNames[i].trim(),
         role: role,
+        alive: true,
       }))
     );
 
@@ -157,6 +181,89 @@ export default function RoleGenerator() {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  // Voting functions
+  const startVoting = () => {
+    setVotes({});
+    setCurrentVoterIndex(0);
+    setVotingComplete(false);
+    setShowVotingModal(true);
+  };
+
+  const castVote = (targetId) => {
+    const voter = players[currentVoterIndex];
+    
+    setVotes(prev => ({
+      ...prev,
+      [voter.id]: targetId
+    }));
+
+    // Move to next voter
+    if (currentVoterIndex < players.length - 1) {
+      setCurrentVoterIndex(currentVoterIndex + 1);
+    } else {
+      // All players have voted
+      setVotingComplete(true);
+    }
+  };
+
+  // Helper function to determine if the game is over
+  const checkWinCondition = (currentPlayers) => {
+    const alivePlayers = currentPlayers.filter(p => p.alive);
+    const mCount = alivePlayers.filter(p => p.role.team === "mafia").length;
+    const tCount = alivePlayers.length - mCount;
+
+    if (mCount === 0) {
+      setGameResult({ 
+        winner: "Town", 
+        message: "The shadows have been cleared. All Mafia members are gone!" 
+      });
+      setPhase("gameOver");
+      return true;
+    }
+
+    if (mCount >= tCount) {
+      setGameResult({ 
+        winner: "Mafia", 
+        message: "The Town has fallen. The Mafia now controls the streets." 
+      });
+      setPhase("gameOver");
+      return true;
+    }
+    return false;
+  };
+
+  const closeVoting = () => {
+    setShowVotingModal(false);
+    const voteCounts = {};
+    Object.values(votes).forEach(targetId => {
+      voteCounts[targetId] = (voteCounts[targetId] || 0) + 1;
+    });
+
+    const maxVotes = Math.max(...Object.values(voteCounts));
+    const eliminatedIds = Object.keys(voteCounts).filter(id => voteCounts[id] === maxVotes);
+
+    if (eliminatedIds.length === 1) {
+      const eliminatedPlayer = players.find(p => p.id === parseInt(eliminatedIds[0]));
+      const updatedPlayers = players.map(p => 
+        p.id === eliminatedPlayer.id ? { ...p, alive: false } : p
+      );
+      
+      setPlayers(updatedPlayers);
+      setVotes({}); // Clear votes after elimination
+      setVotingComplete(false);
+      setCurrentVoterIndex(0);
+
+      if (!checkWinCondition(updatedPlayers)) {
+        Alert.alert("Voting Results", `${eliminatedPlayer.name} was eliminated!`);
+      }
+    } else {
+      Alert.alert("Voting Results", "The vote was tied! No one was eliminated.");
+      setVotes({});
+      setVotingComplete(false);
+      setCurrentVoterIndex(0);
+    }
   };
 
   // Setup Phase
@@ -294,12 +401,62 @@ export default function RoleGenerator() {
               • Quickly assign random roles to all players{"\n"}
               • Each player reveals their role secretly{"\n"}
               • Optional timer for discussion phases{"\n"}
-              • Perfect for experienced players{"\n"}
-              • No game management - just roles!
+              • Private voting system{"\n"}
+              • Perfect for experienced players!
             </Text>
           </View>
         </View>
       </ScrollView>
+    );
+  }
+
+  // Game Over Phase
+  if (phase === "gameOver") {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>Game Over</Text>
+        <Text style={styles.subtitle}>Final Result</Text>
+
+        <View style={styles.gameOverCard}>
+          <Text style={styles.roleEmoji}>
+            {gameResult.winner === "Town" ? "🎉" : "☠️"}
+          </Text>
+
+          <Text
+            style={[
+              styles.gameOverTitle,
+              {
+                color:
+                  gameResult.winner === "Town" ? "#4CAF50" : "#e63946",
+              },
+            ]}
+          >
+            {gameResult.winner.toUpperCase()} VICTORY
+          </Text>
+
+          <View style={styles.separator} />
+
+          <Text style={styles.gameOverMessage}>
+            {gameResult.message}
+          </Text>
+        </View>
+
+        <View style={styles.gameOverButtons}>
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={resetGame}
+          >
+            <Text style={styles.buttonText}>Start New Game</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={() => router.replace("/offline")}
+          >
+            <Text style={styles.buttonText}>Return to Menu</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
     );
   }
 
@@ -420,6 +577,12 @@ export default function RoleGenerator() {
 
   // Timer Phase
   if (phase === "timer") {
+    const alivePlayers = players.filter(p => p.alive);
+    const voteCounts = {};
+    Object.values(votes).forEach(targetId => {
+      voteCounts[targetId] = (voteCounts[targetId] || 0) + 1;
+    });
+
     return (
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         <View style={styles.container}>
@@ -443,12 +606,6 @@ export default function RoleGenerator() {
                   {formatTime(timeRemaining)}
                 </Text>
                 <View style={styles.timerButtons}>
-                  <TouchableOpacity
-                    style={styles.secondaryButton}
-                    onPress={() => setTimerActive(false)}
-                  >
-                    <Text style={styles.buttonText}>⏸️ Pause</Text>
-                  </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.dangerButton}
                     onPress={() => {
@@ -477,7 +634,7 @@ export default function RoleGenerator() {
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.voteButton}
-                    onPress={() => startTimer("voting")}
+                    onPress={startVoting}
                   >
                     <Text style={styles.buttonText}>🗳️ Start Voting</Text>
                   </TouchableOpacity>
@@ -486,11 +643,32 @@ export default function RoleGenerator() {
             )}
           </View>
 
+          {/* Player Status */}
+          <View style={styles.playersCard}>
+            <Text style={styles.rolesTitle}>Players</Text>
+            {players.map((player) => (
+              <View key={player.id} style={[
+                styles.playerItem,
+                !player.alive && styles.playerItemDead
+              ]}>
+                <Text style={styles.playerName}>
+                  {player.name}
+                  {!player.alive && " 💀"}
+                </Text>
+                {voteCounts[player.id] > 0 && (
+                  <Text style={styles.voteCount}>
+                    {voteCounts[player.id]} vote{voteCounts[player.id] !== 1 ? 's' : ''}
+                  </Text>
+                )}
+              </View>
+            ))}
+          </View>
+
           <View style={styles.rolesCard}>
             <Text style={styles.rolesTitle}>Assigned Roles</Text>
             <Text style={styles.rolesSubtext}>
-              {players.filter((p) => p.role.team === "mafia").length} Mafia,{" "}
-              {players.filter((p) => p.role.team === "town").length} Town
+              {alivePlayers.filter((p) => p.role.team === "mafia").length} Mafia,{" "}
+              {alivePlayers.filter((p) => p.role.team === "town").length} Town
             </Text>
           </View>
 
@@ -501,6 +679,60 @@ export default function RoleGenerator() {
             <Text style={styles.buttonText}>End Game</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Voting Modal */}
+        <Modal
+          visible={showVotingModal}
+          transparent
+          animationType="slide"
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.votingModal}>
+              {!votingComplete ? (
+                <>
+                  <Text style={styles.votingTitle}>
+                    {players[currentVoterIndex]?.name}'s Vote
+                  </Text>
+                  <Text style={styles.votingSubtitle}>
+                    Choose who to eliminate
+                  </Text>
+                  <Text style={styles.votingProgress}>
+                    Vote {currentVoterIndex + 1} of {players.length}
+                  </Text>
+
+                  <ScrollView style={styles.votingScroll}>
+                    {players
+                      .filter(p => p.alive && p.id !== players[currentVoterIndex]?.id)
+                      .map((player) => (
+                        <TouchableOpacity
+                          key={player.id}
+                          style={styles.voteOption}
+                          onPress={() => castVote(player.id)}
+                        >
+                          <Text style={styles.voteOptionName}>{player.name}</Text>
+                          <Text style={styles.voteOptionArrow}>→</Text>
+                        </TouchableOpacity>
+                      ))}
+                  </ScrollView>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.votingTitle}>✅ All Votes Cast!</Text>
+                  <Text style={styles.votingSubtitle}>
+                    {Object.keys(votes).length} players voted
+                  </Text>
+                  
+                  <TouchableOpacity
+                    style={styles.primaryButton}
+                    onPress={closeVoting}
+                  >
+                    <Text style={styles.buttonText}>View Results</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
       </ScrollView>
     );
   }
@@ -558,7 +790,7 @@ const styles = StyleSheet.create({
   roleConfigText: { color: "#fff", fontSize: 16, fontWeight: "600" },
   roleConfigControls: { flexDirection: "row", alignItems: "center" },
   roleConfigButton: {
-    backgroundColor: "#e63946", // Color matched to narrator.js primary action
+    backgroundColor: "#e63946",
     width: 32,
     height: 32,
     borderRadius: 16,
@@ -593,6 +825,7 @@ const styles = StyleSheet.create({
   primaryButton: {
     backgroundColor: "#e63946",
     paddingVertical: 16,
+    paddingHorizontal: 24,
     borderRadius: 12,
     alignItems: "center",
     marginTop: 24,
@@ -664,6 +897,33 @@ const styles = StyleSheet.create({
   timerSubtext: { color: "#89a", fontSize: 16, marginBottom: 24 },
   timerButtons: { flexDirection: "row", gap: 12 },
   timerStartButtons: { width: "100%", gap: 12 },
+  playersCard: {
+    backgroundColor: "#1c2541",
+    borderRadius: 12,
+    padding: 20,
+    marginBottom: 16,
+  },
+  playerItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#2d3a5e",
+  },
+  playerItemDead: {
+    opacity: 0.5,
+  },
+  playerName: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  voteCount: {
+    color: "#4ecdc4",
+    fontSize: 14,
+    fontWeight: "600",
+  },
   rolesCard: {
     backgroundColor: "#1c2541",
     borderRadius: 12,
@@ -673,4 +933,87 @@ const styles = StyleSheet.create({
   },
   rolesTitle: { color: "#fff", fontSize: 18, fontWeight: "700", marginBottom: 8 },
   rolesSubtext: { color: "#89a" },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.9)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  votingModal: {
+    backgroundColor: "#1c2541",
+    borderRadius: 20,
+    width: "100%",
+    maxWidth: 400,
+    maxHeight: "80%",
+    padding: 24,
+  },
+  votingTitle: {
+    color: "#fff",
+    fontSize: 28,
+    fontWeight: "800",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  votingSubtitle: {
+    color: "#89a",
+    fontSize: 16,
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  votingProgress: {
+    color: "#4ecdc4",
+    fontSize: 14,
+    textAlign: "center",
+    marginBottom: 20,
+  },
+  votingScroll: {
+    maxHeight: 400,
+  },
+  voteOption: {
+    backgroundColor: "#2d3a5e",
+    borderRadius: 12,
+    padding: 20,
+    marginBottom: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "transparent",
+  },
+  voteOptionName: {
+    color: "#fff",
+    fontSize: 20,
+    fontWeight: "600",
+  },
+  voteOptionArrow: {
+    color: "#e63946",
+    fontSize: 28,
+    fontWeight: "bold",
+  },
+  gameOverCard: {
+  backgroundColor: "#1c2541",
+  borderRadius: 20,
+  padding: 28,
+  alignItems: "center",
+  borderWidth: 1,
+  borderColor: "#2d3a5e",
+  marginVertical: 24,
+  },
+  gameOverTitle: {
+    fontSize: 32,
+    fontWeight: "800",
+    textAlign: "center",
+    marginBottom: 12,
+  },
+  gameOverMessage: {
+    color: "#bcd",
+    fontSize: 16,
+    textAlign: "center",
+    lineHeight: 24,
+    marginTop: 8,
+  },
+  gameOverButtons: {
+    marginTop: 10,
+  },
 });
