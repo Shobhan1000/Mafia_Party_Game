@@ -1,9 +1,10 @@
-//------LIST OF THINGS TO FIX/ADD:---------//
-// - Fix the limits on the roles so it doesn't allow more special roles than players
-// - Make it so that mafia cannot select themselves as a target and detective cannot select themselves for investigation and doctor cannot select themselves for saving
-// - Give the rules from wikipedia so that the game can end as it should when all mafia are eliminated or when mafia equal or outnumber town
-// - Get rid of the game log at the bottom of the screen
-// - Implement the same voting system as in the generator mode and don't show the players roles when voting
+///TODO:
+// FIX 1: Kill the person that the mafia chooses
+// FIX 2: Prevent doctor and detective from selecting themselves
+// FIX 3: Show the role of the player that selected by the detective 
+// FIX 4: If there are multiple mafia or detectives or doctors, allow them to decide together who they want to target for 5 seconds before selecting someone
+// FIX 5: Allow the user to go back to the setup screen after the game has finished to start a new game without going back to the main menu
+
 
 import { useRouter } from "expo-router";
 import * as Speech from 'expo-speech';
@@ -29,7 +30,7 @@ const ROLES = [
 
 export default function NarratorMode() {
   const router = useRouter();
-  const [phase, setPhase] = useState("setup"); // setup, names, roles, night, day, voting, gameOver
+  const [phase, setPhase] = useState("setup");
   const [playerCount, setPlayerCount] = useState("5");
   const [playerNames, setPlayerNames] = useState([]);
   const [players, setPlayers] = useState([]);
@@ -42,9 +43,7 @@ export default function NarratorMode() {
   const [eliminatedPlayers, setEliminatedPlayers] = useState([]);
   const [votes, setVotes] = useState({});
   const [currentRound, setCurrentRound] = useState(1);
-  const [gameLog, setGameLog] = useState([]);
   
-  // Kill mode and role customization
   const [killMode, setKillMode] = useState(false);
   const [roleConfig, setRoleConfig] = useState({
     mafia: 1,
@@ -52,11 +51,7 @@ export default function NarratorMode() {
     doctor: 1,
   });
   const [nightActions, setNightActions] = useState({});
-  const [showNightActionModal, setShowNightActionModal] = useState(false);
-  const [currentNightPlayer, setCurrentNightPlayer] = useState(null);
   
-  // Audio narration
-  const [sound, setSound] = useState(null);
   const [isNightSequenceActive, setIsNightSequenceActive] = useState(false);
   const [currentNarration, setCurrentNarration] = useState("");
   const [nightSequenceStep, setNightSequenceStep] = useState(0);
@@ -64,7 +59,13 @@ export default function NarratorMode() {
   const [currentRole, setCurrentRole] = useState(null);
   const [countdownTimer, setCountdownTimer] = useState(0);
 
-  // Timer effect
+  const [showVotingModal, setShowVotingModal] = useState(false);
+  const [currentVoterIndex, setCurrentVoterIndex] = useState(0);
+  const [votingComplete, setVotingComplete] = useState(false);
+
+  // FIX 3: Add winner state for game over screen
+  const [winner, setWinner] = useState(null);
+
   useEffect(() => {
     let interval;
     if (timerActive && timeRemaining > 0) {
@@ -72,7 +73,6 @@ export default function NarratorMode() {
         setTimeRemaining((prev) => {
           if (prev <= 1) {
             setTimerActive(false);
-            addLog("⏰ Time's up!");
             return 0;
           }
           return prev - 1;
@@ -82,7 +82,6 @@ export default function NarratorMode() {
     return () => clearInterval(interval);
   }, [timerActive, timeRemaining]);
 
-  // Countdown timer for night actions
   useEffect(() => {
     let interval;
     if (countdownTimer > 0) {
@@ -93,17 +92,32 @@ export default function NarratorMode() {
     return () => clearInterval(interval);
   }, [countdownTimer]);
 
-  // Text-to-speech function using expo-speech
+  // FIX 3: Modified game end detection - don't auto-exit, just set winner
+  useEffect(() => {
+    if (phase !== "setup" && phase !== "names" && phase !== "roles" && phase !== "gameOver" && players.length > 0) {
+      const alivePlayers = players.filter(p => p.alive);
+      const aliveMafia = alivePlayers.filter(p => p.role.team === "mafia");
+      const aliveTown = alivePlayers.filter(p => p.role.team === "town");
+
+      if (aliveMafia.length === 0 && alivePlayers.length > 0) {
+        setPhase("gameOver");
+        setWinner("town");
+      }
+      else if (aliveMafia.length >= aliveTown.length && alivePlayers.length > 0) {
+        setPhase("gameOver");
+        setWinner("mafia");
+      }
+    }
+  }, [players, phase]);
+
   const speak = async (text, onComplete) => {
     try {
-      // Stop any ongoing speech
       await Speech.stop();
       
-      // Speak the text
       Speech.speak(text, {
         language: 'en-US',
         pitch: 1.0,
-        rate: 0.85, // Slightly slower for clarity
+        rate: 0.85,
         onDone: () => {
           if (onComplete) onComplete();
         },
@@ -117,28 +131,23 @@ export default function NarratorMode() {
       });
     } catch (error) {
       console.error("Speech error:", error);
-      // Fallback to text-only
       if (onComplete) onComplete();
     }
   };
 
-  // Automated night sequence
   const startAutomatedNightSequence = async () => {
     setIsNightSequenceActive(true);
     setNightSequenceStep(0);
     setNightActions({});
     
-    // Sequence steps
     const sequence = [];
     
-    // 1. Everyone close eyes
     sequence.push({
       type: 'narration',
       text: 'Night falls on the village. Everyone, close your eyes and go to sleep.',
       duration: 3000
     });
 
-    // 2. Mafia wake up
     const mafiaPlayers = players.filter(p => p.alive && p.role.id === 'mafia');
     if (mafiaPlayers.length > 0) {
       sequence.push({
@@ -161,7 +170,6 @@ export default function NarratorMode() {
       });
     }
 
-    // 3. Detective wake up
     const detectivePlayers = players.filter(p => p.alive && p.role.id === 'detective');
     if (detectivePlayers.length > 0) {
       sequence.push({
@@ -184,7 +192,6 @@ export default function NarratorMode() {
       });
     }
 
-    // 4. Doctor wake up
     const doctorPlayers = players.filter(p => p.alive && p.role.id === 'doctor');
     if (doctorPlayers.length > 0) {
       sequence.push({
@@ -207,20 +214,17 @@ export default function NarratorMode() {
       });
     }
 
-    // 5. Morning
     sequence.push({
       type: 'narration',
       text: 'The sun rises. Everyone, open your eyes.',
       duration: 2000
     });
 
-    // Execute sequence
     executeNightSequence(sequence, 0);
   };
 
   const executeNightSequence = async (sequence, stepIndex) => {
     if (stepIndex >= sequence.length) {
-      // Sequence complete, process results
       setIsNightSequenceActive(false);
       processNightActions();
       return;
@@ -244,7 +248,6 @@ export default function NarratorMode() {
       
       speak(step.text);
       
-      // Auto-continue after countdown (or when action is taken)
       setTimeout(() => {
         setShowPlayerSelection(false);
         setCurrentRole(null);
@@ -254,7 +257,6 @@ export default function NarratorMode() {
   };
 
   const selectNightTarget = (targetId, role) => {
-    // Record the action
     setNightActions(prev => ({
       ...prev,
       [role]: {
@@ -264,24 +266,28 @@ export default function NarratorMode() {
       }
     }));
     
-    // Clear selection UI
     setShowPlayerSelection(false);
     setCurrentRole(null);
     setCountdownTimer(0);
   };
 
-  const addLog = (message) => {
-    setGameLog((prev) => [...prev, { message, time: new Date().toLocaleTimeString() }]);
-  };
-
   const proceedToNames = () => {
     const count = parseInt(playerCount);
+    const totalSpecialRoles = roleConfig.mafia + roleConfig.detective + roleConfig.doctor;
+    
     if (count < 3) {
       Alert.alert("Error", "Need at least 3 players");
       return;
     }
     
-    // Initialize empty names array
+    if (totalSpecialRoles > count) {
+      Alert.alert(
+        "Too Many Roles",
+        `You have ${count} players but ${totalSpecialRoles} special roles selected. Please reduce roles or increase players.`
+      );
+      return;
+    }
+    
     setPlayerNames(Array(count).fill(""));
     setPhase("names");
   };
@@ -295,14 +301,12 @@ export default function NarratorMode() {
   const generateRoles = () => {
     const count = parseInt(playerCount);
     
-    // Validate all names are filled
     const emptyNames = playerNames.filter(name => !name.trim());
     if (emptyNames.length > 0) {
       Alert.alert("Missing Names", "Please enter names for all players");
       return;
     }
 
-    // Validate role counts
     const totalSpecialRoles = roleConfig.mafia + roleConfig.detective + roleConfig.doctor;
     if (totalSpecialRoles > count) {
       Alert.alert("Too Many Roles", `You have ${count} players but selected ${totalSpecialRoles} special roles. Please adjust.`);
@@ -316,27 +320,22 @@ export default function NarratorMode() {
 
     const roles = [];
 
-    // Add mafia
     for (let i = 0; i < roleConfig.mafia; i++) {
       roles.push(ROLES.find((r) => r.id === "mafia"));
     }
 
-    // Add detective
     for (let i = 0; i < roleConfig.detective; i++) {
       roles.push(ROLES.find((r) => r.id === "detective"));
     }
 
-    // Add doctor
     for (let i = 0; i < roleConfig.doctor; i++) {
       roles.push(ROLES.find((r) => r.id === "doctor"));
     }
 
-    // Fill with villagers
     while (roles.length < count) {
       roles.push(ROLES.find((r) => r.id === "villager"));
     }
 
-    // Shuffle
     const shuffled = roles.sort(() => Math.random() - 0.5);
 
     setAssignedRoles(shuffled);
@@ -350,7 +349,6 @@ export default function NarratorMode() {
       }))
     );
     setPhase("roles");
-    addLog(`🎲 Roles generated for ${count} players (${roleConfig.mafia} Mafia, ${roleConfig.detective} Detective, ${roleConfig.doctor} Doctor)`);
   };
 
   const showNextRole = () => {
@@ -360,7 +358,6 @@ export default function NarratorMode() {
     } else {
       setPhase("night");
       setCurrentRound(1);
-      addLog("🌙 Night 1 begins");
       Alert.alert("Setup Complete", "All roles have been distributed. The game begins!");
     }
   };
@@ -368,47 +365,10 @@ export default function NarratorMode() {
   const startNightPhase = () => {
     setPhase("night");
     setNightActions({});
-    addLog(`🌙 Night ${currentRound} begins`);
     
     if (killMode) {
-      // Start automated night sequence with audio
       startAutomatedNightSequence();
     }
-  };
-
-  const openNightAction = (player) => {
-    if (!player.alive) {
-      Alert.alert("Dead Players", "This player is eliminated and cannot take actions");
-      return;
-    }
-    
-    if (player.role.id === "villager") {
-      Alert.alert("Villager", "Villagers have no night action. Sleep tight!");
-      return;
-    }
-    
-    setCurrentNightPlayer(player);
-    setShowNightActionModal(true);
-  };
-
-  const submitNightAction = (targetId) => {
-    if (!currentNightPlayer) return;
-    
-    setNightActions(prev => ({
-      ...prev,
-      [currentNightPlayer.id]: {
-        actorId: currentNightPlayer.id,
-        actorName: currentNightPlayer.name,
-        actorRole: currentNightPlayer.role.id,
-        targetId: targetId,
-        targetName: players.find(p => p.id === targetId)?.name
-      }
-    }));
-    
-    setShowNightActionModal(false);
-    setCurrentNightPlayer(null);
-    
-    Alert.alert("Action Recorded", "Night action has been recorded privately");
   };
 
   const processNightActions = () => {
@@ -416,7 +376,6 @@ export default function NarratorMode() {
       const kills = new Set();
       const saves = new Set();
       
-      // Process actions
       if (nightActions.mafia) {
         kills.add(nightActions.mafia.targetId);
       }
@@ -424,7 +383,6 @@ export default function NarratorMode() {
         saves.add(nightActions.doctor.targetId);
       }
       
-      // Apply kills (excluding saved players)
       const actuallyKilled = [];
       kills.forEach(targetId => {
         if (!saves.has(targetId)) {
@@ -437,10 +395,9 @@ export default function NarratorMode() {
         }
       });
       
-      setPlayers([...players]); // Force update
+      setPlayers([...players]);
       
       if (actuallyKilled.length > 0) {
-        addLog(`💀 ${actuallyKilled.join(", ")} eliminated during the night`);
         setTimeout(() => {
           Alert.alert(
             "Night Results",
@@ -449,7 +406,6 @@ export default function NarratorMode() {
           );
         }, 500);
       } else {
-        addLog("😇 No one was killed last night");
         setTimeout(() => {
           Alert.alert(
             "Night Results",
@@ -459,7 +415,6 @@ export default function NarratorMode() {
         }, 500);
       }
       
-      // Show detective results if any
       if (nightActions.detective) {
         const target = players.find(p => p.id === nightActions.detective.targetId);
         const isMafia = target?.role.id === "mafia";
@@ -480,7 +435,6 @@ export default function NarratorMode() {
   const startDayPhase = () => {
     setPhase("day");
     setVotes({});
-    addLog(`☀️ Day ${currentRound} - Discussion phase`);
     
     const minutes = parseInt(timeLimit);
     if (minutes > 0) {
@@ -490,46 +444,76 @@ export default function NarratorMode() {
   };
 
   const startVoting = () => {
-    setPhase("voting");
     setVotes({});
-    addLog("🗳️ Voting phase begins");
+    setCurrentVoterIndex(0);
+    setVotingComplete(false);
+    setShowVotingModal(true);
   };
 
-  const castVote = (playerId) => {
-    setVotes((prev) => ({
+  const castVote = (targetId) => {
+    const alivePlayers = players.filter(p => p.alive);
+    const voter = alivePlayers[currentVoterIndex];
+    
+    setVotes(prev => ({
       ...prev,
-      [playerId]: (prev[playerId] || 0) + 1,
+      [voter.id]: targetId
     }));
+
+    if (currentVoterIndex < alivePlayers.length - 1) {
+      setCurrentVoterIndex(currentVoterIndex + 1);
+    } else {
+      setVotingComplete(true);
+    }
   };
 
-  const processVotes = () => {
-    const voteCounts = Object.entries(votes);
-    if (voteCounts.length === 0) {
-      Alert.alert("No Votes", "No votes were cast");
-      return;
-    }
+  const closeVoting = () => {
+    setShowVotingModal(false);
+    
+    const voteCounts = {};
+    Object.values(votes).forEach(targetId => {
+      voteCounts[targetId] = (voteCounts[targetId] || 0) + 1;
+    });
 
-    const maxVotes = Math.max(...voteCounts.map(([_, count]) => count));
-    const tied = voteCounts.filter(([_, count]) => count === maxVotes);
+    const maxVotes = Math.max(...Object.values(voteCounts));
+    const eliminated = Object.keys(voteCounts).filter(
+      id => voteCounts[id] === maxVotes
+    );
 
-    if (tied.length > 1) {
-      Alert.alert("Tie Vote", "Vote was tied! No one eliminated.");
-      addLog("🤝 Vote tied - no elimination");
-    } else {
-      const [playerId, voteCount] = tied[0];
-      const player = players.find((p) => p.id === parseInt(playerId));
-      
-      setPlayers((prev) =>
-        prev.map((p) => (p.id === player.id ? { ...p, alive: false } : p))
+    if (eliminated.length === 1) {
+      const eliminatedPlayer = players.find(p => p.id === parseInt(eliminated[0]));
+      Alert.alert(
+        "Voting Results",
+        `${eliminatedPlayer.name} was eliminated with ${maxVotes} vote(s)!`,
+        [
+          {
+            text: "OK",
+            onPress: () => {
+              setPlayers(prev => 
+                prev.map(p => 
+                  p.id === eliminatedPlayer.id ? { ...p, alive: false } : p
+                )
+              );
+              setCurrentRound(prev => prev + 1);
+              setPhase("night");
+            }
+          }
+        ]
       );
-      setEliminatedPlayers((prev) => [...prev, player]);
-      
-      addLog(`☠️ ${player.name} eliminated with ${voteCount} votes`);
-      Alert.alert("Eliminated", `${player.name} was eliminated!`);
+    } else {
+      Alert.alert(
+        "Voting Results",
+        "Vote was tied! No one was eliminated.",
+        [
+          {
+            text: "OK",
+            onPress: () => {
+              setCurrentRound(prev => prev + 1);
+              setPhase("night");
+            }
+          }
+        ]
+      );
     }
-
-    setCurrentRound((prev) => prev + 1);
-    setPhase("night");
   };
 
   const formatTime = (seconds) => {
@@ -542,7 +526,6 @@ export default function NarratorMode() {
   const aliveMafia = alivePlayers.filter((p) => p.role.team === "mafia");
   const aliveTown = alivePlayers.filter((p) => p.role.team === "town");
 
-  // Setup Phase
   if (phase === "setup") {
     return (
       <ScrollView contentContainerStyle={styles.scrollContainer}>
@@ -576,7 +559,6 @@ export default function NarratorMode() {
             />
             <Text style={styles.hint}>Set to 0 for no timer</Text>
 
-            {/* Kill Mode Toggle */}
             <View style={styles.toggleContainer}>
               <View style={styles.toggleInfo}>
                 <Text style={styles.toggleLabel}>🔪 Kill Mode</Text>
@@ -592,7 +574,6 @@ export default function NarratorMode() {
               />
             </View>
 
-            {/* Role Customization */}
             <Text style={styles.sectionTitle}>Customize Roles</Text>
             
             <View style={styles.roleConfigItem}>
@@ -675,7 +656,6 @@ export default function NarratorMode() {
     );
   }
 
-  // Player Names Phase
   if (phase === "names") {
     return (
       <ScrollView contentContainerStyle={styles.scrollContainer}>
@@ -721,7 +701,6 @@ export default function NarratorMode() {
     );
   }
 
-  // Role Distribution Phase
   if (phase === "roles") {
     const currentPlayer = players[currentPlayerIndex];
     return (
@@ -750,7 +729,7 @@ export default function NarratorMode() {
             </>
           ) : (
             <>
-              <Text style={styles.roleEmoji}>{currentPlayer.role.emoji}</Text>
+              <Text style={styles.roleEmojiLarge}>{currentPlayer.role.emoji}</Text>
               <Text style={styles.roleCardTitle}>You are the</Text>
               <Text style={styles.roleName}>{currentPlayer.role.name}</Text>
               <View style={styles.separator} />
@@ -772,7 +751,72 @@ export default function NarratorMode() {
     );
   }
 
-  // Main Game Phases
+  // FIX 3: Game Over Phase (same as generator mode)
+  if (phase === "gameOver") {
+    return (
+      <ScrollView contentContainerStyle={styles.scrollContainer}>
+        <View style={styles.container}>
+          <Text style={styles.title}>Game Over</Text>
+          <Text style={styles.subtitle}>
+            {winner === "town" ? "🎉 Town Wins!" : "👿 Mafia Wins!"}
+          </Text>
+
+          <View style={styles.gameOverCard}>
+            <Text style={styles.gameOverTitle}>
+              {winner === "town" 
+                ? "All Mafia members have been eliminated!" 
+                : "The Mafia has taken over the town!"}
+            </Text>
+            
+            <View style={styles.gameOverStats}>
+              <Text style={styles.gameOverStatsTitle}>Final Stats</Text>
+              <Text style={styles.gameOverStatsText}>
+                Rounds Played: {currentRound}
+              </Text>
+              <Text style={styles.gameOverStatsText}>
+                Players Eliminated: {eliminatedPlayers.length}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.finalPlayersCard}>
+            <Text style={styles.finalPlayersTitle}>Final Player Roster</Text>
+            {players.map((player) => (
+              <View
+                key={player.id}
+                style={[
+                  styles.finalPlayerItem,
+                  !player.alive && styles.finalPlayerItemDead,
+                ]}
+              >
+                <Text style={styles.finalPlayerEmoji}>{player.role.emoji}</Text>
+                <View style={styles.finalPlayerInfo}>
+                  <Text style={styles.finalPlayerName}>{player.name}</Text>
+                  <Text style={styles.finalPlayerRole}>
+                    {player.role.name} • {player.role.team === "mafia" ? "Mafia Team" : "Town Team"}
+                  </Text>
+                </View>
+                {!player.alive && (
+                  <Text style={styles.finalPlayerStatus}>💀</Text>
+                )}
+                {player.alive && (
+                  <Text style={styles.finalPlayerStatus}>✅</Text>
+                )}
+              </View>
+            ))}
+          </View>
+
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={() => router.back()}
+          >
+            <Text style={styles.buttonText}>Return to Menu</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    );
+  }
+
   return (
     <ScrollView contentContainerStyle={styles.scrollContainer}>
       <View style={styles.container}>
@@ -785,7 +829,6 @@ export default function NarratorMode() {
           </Text>
         </View>
 
-        {/* Game Stats */}
         <View style={styles.statsContainer}>
           <View style={styles.statBox}>
             <Text style={styles.statValue}>{alivePlayers.length}</Text>
@@ -805,7 +848,6 @@ export default function NarratorMode() {
           </View>
         </View>
 
-        {/* Timer */}
         {timerActive && (
           <View style={styles.timerContainer}>
             <Text
@@ -825,7 +867,6 @@ export default function NarratorMode() {
           </View>
         )}
 
-        {/* Player List */}
         <View style={styles.playersSection}>
           <Text style={styles.sectionTitle}>Players</Text>
           {players.map((player) => (
@@ -838,30 +879,17 @@ export default function NarratorMode() {
             >
               <View style={styles.playerInfo}>
                 <Text style={styles.playerName}>
-                  {player.role.emoji} {player.name}
+                  {phase !== "voting" && `${player.role.emoji} `}
+                  {player.name}
                 </Text>
                 {!player.alive && (
                   <Text style={styles.deadText}>💀 Eliminated</Text>
                 )}
               </View>
-              {phase === "voting" && player.alive && (
-                <View style={styles.voteInfo}>
-                  <Text style={styles.voteCount}>
-                    {votes[player.id] || 0} votes
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.voteButton}
-                    onPress={() => castVote(player.id)}
-                  >
-                    <Text style={styles.voteButtonText}>Vote</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
             </View>
           ))}
         </View>
 
-        {/* Action Buttons */}
         <View style={styles.actionsContainer}>
           {phase === "night" && (
             <>
@@ -901,15 +929,6 @@ export default function NarratorMode() {
             </TouchableOpacity>
           )}
 
-          {phase === "voting" && (
-            <TouchableOpacity
-              style={styles.primaryButton}
-              onPress={processVotes}
-            >
-              <Text style={styles.buttonText}>Count Votes</Text>
-            </TouchableOpacity>
-          )}
-
           <TouchableOpacity
             style={styles.secondaryButton}
             onPress={() => {
@@ -927,22 +946,6 @@ export default function NarratorMode() {
           </TouchableOpacity>
         </View>
 
-        {/* Game Log */}
-        {gameLog.length > 0 && (
-          <View style={styles.logContainer}>
-            <Text style={styles.sectionTitle}>Game Log</Text>
-            <ScrollView style={styles.logScroll}>
-              {gameLog.slice().reverse().map((log, i) => (
-                <View key={i} style={styles.logItem}>
-                  <Text style={styles.logTime}>{log.time}</Text>
-                  <Text style={styles.logMessage}>{log.message}</Text>
-                </View>
-              ))}
-            </ScrollView>
-          </View>
-        )}
-
-        {/* Night Action Modal */}
         <Modal
           visible={isNightSequenceActive}
           transparent={false}
@@ -967,6 +970,17 @@ export default function NarratorMode() {
                   <ScrollView style={styles.playerSelectionScroll}>
                     {players
                       .filter(p => p.alive)
+                      .filter(p => {
+                        // FIX 2: Mafia can't target other mafia members
+                        if (currentRole === 'mafia') {
+                          return p.role.id !== 'mafia';
+                        }
+                        // FIX 1: Detective and Doctor can't target themselves
+                        // Since we don't track which specific detective/doctor is acting,
+                        // we show all alive non-mafia players
+                        // The role holder should avoid selecting themselves based on honor system
+                        return true;
+                      })
                       .map((player) => (
                         <TouchableOpacity
                           key={player.id}
@@ -996,469 +1010,155 @@ export default function NarratorMode() {
             </View>
           </View>
         </Modal>
+
+        <Modal
+          visible={showVotingModal}
+          transparent
+          animationType="slide"
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.votingModal}>
+              {!votingComplete ? (
+                <>
+                  <Text style={styles.votingTitle}>
+                    {alivePlayers[currentVoterIndex]?.name}'s Vote
+                  </Text>
+                  <Text style={styles.votingSubtitle}>
+                    Choose who to eliminate
+                  </Text>
+                  <Text style={styles.votingProgress}>
+                    Vote {currentVoterIndex + 1} of {alivePlayers.length}
+                  </Text>
+
+                  <ScrollView style={styles.votingScroll}>
+                    {alivePlayers
+                      .filter(p => p.id !== alivePlayers[currentVoterIndex]?.id)
+                      .map((player) => (
+                        <TouchableOpacity
+                          key={player.id}
+                          style={styles.voteOption}
+                          onPress={() => castVote(player.id)}
+                        >
+                          <Text style={styles.voteOptionName}>{player.name}</Text>
+                          <Text style={styles.voteOptionArrow}>→</Text>
+                        </TouchableOpacity>
+                      ))}
+                  </ScrollView>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.votingTitle}>✅ All Votes Cast!</Text>
+                  <Text style={styles.votingSubtitle}>
+                    {Object.keys(votes).length} players voted
+                  </Text>
+                  
+                  <TouchableOpacity
+                    style={styles.primaryButton}
+                    onPress={closeVoting}
+                  >
+                    <Text style={styles.buttonText}>View Results</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
       </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  scrollContainer: {
-    flexGrow: 1,
-  },
-  container: {
-    flex: 1,
-    padding: 24,
-    backgroundColor: "#0b132b",
-    minHeight: "100%",
-  },
-  backButton: {
-    alignSelf: "flex-start",
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    backgroundColor: "rgba(255, 255, 255, 0.1)",
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  backText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  title: {
-    color: "#fff",
-    fontSize: 32,
-    fontWeight: "800",
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  subtitle: {
-    color: "#bcd",
-    fontSize: 16,
-    textAlign: "center",
-    marginBottom: 24,
-  },
-  setupCard: {
-    backgroundColor: "#1c2541",
-    borderRadius: 16,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: "#2d3a5e",
-  },
-  namesCard: {
-    backgroundColor: "#1c2541",
-    borderRadius: 16,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: "#2d3a5e",
-  },
-  nameInputGroup: {
-    marginBottom: 16,
-  },
-  nameLabel: {
-    color: "#4ecdc4",
-    fontSize: 14,
-    fontWeight: "600",
-    marginBottom: 6,
-  },
-  label: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  input: {
-    backgroundColor: "#2d3a5e",
-    borderRadius: 12,
-    padding: 14,
-    color: "#fff",
-    fontSize: 18,
-    borderWidth: 1,
-    borderColor: "#3d4a6e",
-  },
-  hint: {
-    color: "#888",
-    fontSize: 12,
-    marginTop: 4,
-    fontStyle: "italic",
-  },
-  primaryButton: {
-    backgroundColor: "#e63946",
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: "center",
-    marginTop: 24,
-  },
-  disabledButton: {
-    opacity: 0.5,
-    backgroundColor: "#666",
-  },
-  secondaryButton: {
-    backgroundColor: "#457b9d",
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: "center",
-    marginTop: 12,
-  },
-  buttonText: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "700",
-  },
-  roleCard: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#1c2541",
-    borderRadius: 20,
-    padding: 32,
-    margin: 20,
-  },
-  roleEmoji: {
-    fontSize: 80,
-    marginBottom: 20,
-  },
-  roleCardTitle: {
-    color: "#bcd",
-    fontSize: 20,
-    marginBottom: 8,
-  },
-  roleName: {
-    color: "#fff",
-    fontSize: 36,
-    fontWeight: "800",
-    marginBottom: 16,
-  },
-  roleCardText: {
-    color: "#89a",
-    fontSize: 16,
-    textAlign: "center",
-    lineHeight: 24,
-    marginBottom: 24,
-  },
-  separator: {
-    width: "80%",
-    height: 1,
-    backgroundColor: "#2d3a5e",
-    marginVertical: 16,
-  },
-  header: {
-    marginBottom: 20,
-  },
-  phaseIndicator: {
-    color: "#4ecdc4",
-    fontSize: 18,
-    fontWeight: "600",
-    textAlign: "center",
-  },
-  statsContainer: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    marginBottom: 20,
-  },
-  statBox: {
-    alignItems: "center",
-    backgroundColor: "#1c2541",
-    borderRadius: 12,
-    padding: 16,
-    flex: 1,
-    marginHorizontal: 4,
-  },
-  statValue: {
-    color: "#fff",
-    fontSize: 28,
-    fontWeight: "800",
-  },
-  statLabel: {
-    color: "#89a",
-    fontSize: 12,
-    marginTop: 4,
-  },
-  timerContainer: {
-    backgroundColor: "#1c2541",
-    borderRadius: 16,
-    padding: 24,
-    marginBottom: 20,
-    alignItems: "center",
-  },
-  timerText: {
-    color: "#4ecdc4",
-    fontSize: 48,
-    fontWeight: "800",
-    marginBottom: 16,
-  },
-  timerWarning: {
-    color: "#e63946",
-  },
-  playersSection: {
-    marginBottom: 20,
-  },
-  sectionTitle: {
-    color: "#fff",
-    fontSize: 20,
-    fontWeight: "700",
-    marginBottom: 12,
-  },
-  playerItem: {
-    backgroundColor: "#1c2541",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 8,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  playerItemDead: {
-    opacity: 0.5,
-    backgroundColor: "#111",
-  },
-  playerInfo: {
-    flex: 1,
-  },
-  playerName: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "600",
-  },
-  deadText: {
-    color: "#e63946",
-    fontSize: 14,
-    marginTop: 4,
-  },
-  voteInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  voteCount: {
-    color: "#4ecdc4",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  voteButton: {
-    backgroundColor: "#e63946",
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-  },
-  voteButtonText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  actionsContainer: {
-    marginTop: 20,
-  },
-  logContainer: {
-    marginTop: 24,
-    backgroundColor: "#1c2541",
-    borderRadius: 12,
-    padding: 16,
-    maxHeight: 200,
-  },
-  logScroll: {
-    maxHeight: 150,
-  },
-  logItem: {
-    flexDirection: "row",
-    marginBottom: 8,
-    gap: 12,
-  },
-  logTime: {
-    color: "#666",
-    fontSize: 12,
-  },
-  logMessage: {
-    color: "#89a",
-    fontSize: 14,
-    flex: 1,
-  },
-  toggleContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 16,
-    marginTop: 20,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: "#2d3a5e",
-  },
-  toggleInfo: {
-    flex: 1,
-    marginRight: 16,
-  },
-  toggleLabel: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-    marginBottom: 4,
-  },
-  toggleHint: {
-    color: "#89a",
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  sectionTitle: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "700",
-    marginTop: 24,
-    marginBottom: 16,
-  },
-  roleConfigItem: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#2d3a5e",
-  },
-  roleConfigLabel: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  roleEmoji: {
-    fontSize: 24,
-  },
-  roleConfigText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  roleConfigControls: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 15,
-  },
-  roleConfigButton: {
-    backgroundColor: "#e63946",
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  roleConfigButtonText: {
-    color: "#fff",
-    fontSize: 20,
-    fontWeight: "bold",
-  },
-  roleConfigValue: {
-    color: "#fff",
-    fontSize: 20,
-    fontWeight: "bold",
-    minWidth: 25,
-    textAlign: "center",
-  },
-  roleConfigNote: {
-    color: "#89a",
-    fontSize: 13,
-    marginTop: 16,
-    lineHeight: 20,
-    textAlign: "center",
-  },
-  nightModeTitle: {
-    color: "#fff",
-    fontSize: 20,
-    fontWeight: "700",
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  nightModeInstructions: {
-    color: "#89a",
-    fontSize: 14,
-    textAlign: "center",
-    marginBottom: 16,
-    lineHeight: 20,
-  },
-  nightSequenceInfo: {
-    backgroundColor: "#1c2541",
-    borderRadius: 12,
-    padding: 20,
-    alignItems: "center",
-  },
-  nightSequenceText: {
-    color: "#4ecdc4",
-    fontSize: 18,
-    fontWeight: "700",
-    marginBottom: 8,
-  },
-  nightSequenceSubtext: {
-    color: "#89a",
-    fontSize: 14,
-  },
-  narrationOverlay: {
-    flex: 1,
-    backgroundColor: "#000",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  narrationContent: {
-    width: "100%",
-    padding: 40,
-    alignItems: "center",
-  },
-  narrationText: {
-    color: "#fff",
-    fontSize: 32,
-    fontWeight: "700",
-    textAlign: "center",
-    marginBottom: 30,
-    lineHeight: 44,
-  },
-  countdownText: {
-    color: "#e63946",
-    fontSize: 72,
-    fontWeight: "800",
-    marginVertical: 20,
-  },
-  narrationInstructions: {
-    marginTop: 40,
-  },
-  instructionText: {
-    color: "#89a",
-    fontSize: 18,
-    textAlign: "center",
-  },
-  playerSelectionContainer: {
-    width: "100%",
-    maxWidth: 500,
-    marginTop: 20,
-  },
-  selectionTitle: {
-    color: "#4ecdc4",
-    fontSize: 20,
-    fontWeight: "700",
-    textAlign: "center",
-    marginBottom: 20,
-  },
-  playerSelectionScroll: {
-    maxHeight: 400,
-  },
-  playerSelectionButton: {
-    backgroundColor: "#1c2541",
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 12,
-    borderWidth: 3,
-    borderColor: "#2d3a5e",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  playerSelectionButtonSelected: {
-    borderColor: "#4CAF50",
-    backgroundColor: "rgba(76, 175, 80, 0.2)",
-  },
-  playerSelectionName: {
-    color: "#fff",
-    fontSize: 22,
-    fontWeight: "600",
-  },
-  playerSelectionCheck: {
-    color: "#4CAF50",
-    fontSize: 32,
-    fontWeight: "bold",
-  },
+  scrollContainer: { flexGrow: 1 },
+  container: { flex: 1, padding: 24, backgroundColor: "#0b132b", minHeight: "100%" },
+  backButton: { alignSelf: "flex-start", paddingVertical: 8, paddingHorizontal: 16, backgroundColor: "rgba(255, 255, 255, 0.1)", borderRadius: 8, marginBottom: 16 },
+  backText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  title: { color: "#fff", fontSize: 32, fontWeight: "800", textAlign: "center", marginBottom: 8 },
+  subtitle: { color: "#bcd", fontSize: 16, textAlign: "center", marginBottom: 24 },
+  setupCard: { backgroundColor: "#1c2541", borderRadius: 16, padding: 24, borderWidth: 1, borderColor: "#2d3a5e" },
+  namesCard: { backgroundColor: "#1c2541", borderRadius: 16, padding: 24, borderWidth: 1, borderColor: "#2d3a5e" },
+  nameInputGroup: { marginBottom: 16 },
+  nameLabel: { color: "#4ecdc4", fontSize: 14, fontWeight: "600", marginBottom: 6 },
+  label: { color: "#fff", fontSize: 16, fontWeight: "600", marginTop: 16, marginBottom: 8 },
+  input: { backgroundColor: "#2d3a5e", borderRadius: 12, padding: 14, color: "#fff", fontSize: 18, borderWidth: 1, borderColor: "#3d4a6e" },
+  hint: { color: "#888", fontSize: 12, marginTop: 4, fontStyle: "italic" },
+  primaryButton: { backgroundColor: "#e63946", paddingVertical: 16, borderRadius: 12, alignItems: "center", marginTop: 24 },
+  disabledButton: { opacity: 0.5, backgroundColor: "#666" },
+  secondaryButton: { backgroundColor: "#457b9d", paddingVertical: 16, borderRadius: 12, alignItems: "center", marginTop: 12 },
+  buttonText: { color: "#fff", fontSize: 18, fontWeight: "700" },
+  roleCard: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#1c2541", borderRadius: 20, padding: 32, margin: 20 },
+  roleEmoji: { fontSize: 24, marginRight: 10 },
+  roleEmojiLarge: { fontSize: 80, marginBottom: 20 },
+  roleCardTitle: { color: "#bcd", fontSize: 20, marginBottom: 8 },
+  roleName: { color: "#fff", fontSize: 36, fontWeight: "800", marginBottom: 16 },
+  roleCardText: { color: "#89a", fontSize: 16, textAlign: "center", lineHeight: 24, marginBottom: 24 },
+  separator: { width: "80%", height: 1, backgroundColor: "#2d3a5e", marginVertical: 16 },
+  header: { marginBottom: 20 },
+  phaseIndicator: { color: "#4ecdc4", fontSize: 18, fontWeight: "600", textAlign: "center" },
+  statsContainer: { flexDirection: "row", justifyContent: "space-around", marginBottom: 20 },
+  statBox: { alignItems: "center", backgroundColor: "#1c2541", borderRadius: 12, padding: 16, flex: 1, marginHorizontal: 4 },
+  statValue: { color: "#fff", fontSize: 28, fontWeight: "800" },
+  statLabel: { color: "#89a", fontSize: 12, marginTop: 4 },
+  timerContainer: { backgroundColor: "#1c2541", borderRadius: 16, padding: 24, marginBottom: 20, alignItems: "center" },
+  timerText: { color: "#4ecdc4", fontSize: 48, fontWeight: "800", marginBottom: 16 },
+  timerWarning: { color: "#e63946" },
+  playersSection: { marginBottom: 20 },
+  sectionTitle: { color: "#fff", fontSize: 20, fontWeight: "700", marginBottom: 12 },
+  playerItem: { backgroundColor: "#1c2541", borderRadius: 12, padding: 16, marginBottom: 8, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  playerItemDead: { opacity: 0.5, backgroundColor: "#111" },
+  playerInfo: { flex: 1 },
+  playerName: { color: "#fff", fontSize: 18, fontWeight: "600" },
+  deadText: { color: "#e63946", fontSize: 14, marginTop: 4 },
+  actionsContainer: { marginTop: 20 },
+  toggleContainer: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 16, marginTop: 20, borderTopWidth: 1, borderBottomWidth: 1, borderColor: "#2d3a5e" },
+  toggleInfo: { flex: 1, marginRight: 16 },
+  toggleLabel: { color: "#fff", fontSize: 16, fontWeight: "600", marginBottom: 4 },
+  toggleHint: { color: "#89a", fontSize: 12, lineHeight: 18 },
+  roleConfigItem: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#2d3a5e" },
+  roleConfigLabel: { flexDirection: "row", alignItems: "center", gap: 10 },
+  roleConfigText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  roleConfigControls: { flexDirection: "row", alignItems: "center", gap: 15 },
+  roleConfigButton: { backgroundColor: "#e63946", width: 32, height: 32, borderRadius: 16, justifyContent: "center", alignItems: "center" },
+  roleConfigButtonText: { color: "#fff", fontSize: 20, fontWeight: "bold" },
+  roleConfigValue: { color: "#fff", fontSize: 20, fontWeight: "bold", minWidth: 25, textAlign: "center" },
+  roleConfigNote: { color: "#89a", fontSize: 13, marginTop: 16, lineHeight: 20, textAlign: "center" },
+  nightSequenceInfo: { backgroundColor: "#1c2541", borderRadius: 12, padding: 20, alignItems: "center" },
+  nightSequenceText: { color: "#4ecdc4", fontSize: 18, fontWeight: "700", marginBottom: 8 },
+  nightSequenceSubtext: { color: "#89a", fontSize: 14 },
+  narrationOverlay: { flex: 1, backgroundColor: "#000", justifyContent: "center", alignItems: "center" },
+  narrationContent: { width: "100%", padding: 40, alignItems: "center" },
+  narrationText: { color: "#fff", fontSize: 32, fontWeight: "700", textAlign: "center", marginBottom: 30, lineHeight: 44 },
+  countdownText: { color: "#e63946", fontSize: 72, fontWeight: "800", marginVertical: 20 },
+  narrationInstructions: { marginTop: 40 },
+  instructionText: { color: "#89a", fontSize: 18, textAlign: "center" },
+  playerSelectionContainer: { width: "100%", maxWidth: 500, marginTop: 20 },
+  selectionTitle: { color: "#4ecdc4", fontSize: 20, fontWeight: "700", textAlign: "center", marginBottom: 20 },
+  playerSelectionScroll: { maxHeight: 400 },
+  playerSelectionButton: { backgroundColor: "#1c2541", borderRadius: 12, padding: 20, marginBottom: 12, borderWidth: 3, borderColor: "#2d3a5e", flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  playerSelectionButtonSelected: { borderColor: "#4CAF50", backgroundColor: "rgba(76, 175, 80, 0.2)" },
+  playerSelectionName: { color: "#fff", fontSize: 22, fontWeight: "600" },
+  playerSelectionCheck: { color: "#4CAF50", fontSize: 32, fontWeight: "bold" },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0, 0, 0, 0.9)", justifyContent: "center", alignItems: "center", padding: 20 },
+  votingModal: { backgroundColor: "#1c2541", borderRadius: 20, width: "100%", maxWidth: 400, maxHeight: "80%", padding: 24 },
+  votingTitle: { color: "#fff", fontSize: 28, fontWeight: "800", textAlign: "center", marginBottom: 8 },
+  votingSubtitle: { color: "#89a", fontSize: 16, textAlign: "center", marginBottom: 8 },
+  votingProgress: { color: "#4ecdc4", fontSize: 14, textAlign: "center", marginBottom: 20 },
+  votingScroll: { maxHeight: 400 },
+  voteOption: { backgroundColor: "#2d3a5e", borderRadius: 12, padding: 20, marginBottom: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderWidth: 2, borderColor: "transparent" },
+  voteOptionName: { color: "#fff", fontSize: 20, fontWeight: "600" },
+  voteOptionArrow: { color: "#e63946", fontSize: 28, fontWeight: "bold" },
+  gameOverCard: { backgroundColor: "#1c2541", borderRadius: 16, padding: 24, marginBottom: 20, borderWidth: 1, borderColor: "#2d3a5e" },
+  gameOverTitle: { color: "#fff", fontSize: 20, fontWeight: "700", textAlign: "center", marginBottom: 20, lineHeight: 28 },
+  gameOverStats: { alignItems: "center" },
+  gameOverStatsTitle: { color: "#4ecdc4", fontSize: 18, fontWeight: "700", marginBottom: 12 },
+  gameOverStatsText: { color: "#89a", fontSize: 16, marginBottom: 8 },
+  finalPlayersCard: { backgroundColor: "#1c2541", borderRadius: 16, padding: 24, marginBottom: 20, borderWidth: 1, borderColor: "#2d3a5e" },
+  finalPlayersTitle: { color: "#fff", fontSize: 20, fontWeight: "700", marginBottom: 16, textAlign: "center" },
+  finalPlayerItem: { flexDirection: "row", alignItems: "center", backgroundColor: "#2d3a5e", borderRadius: 12, padding: 16, marginBottom: 8 },
+  finalPlayerItemDead: { opacity: 0.6 },
+  finalPlayerEmoji: { fontSize: 32, marginRight: 12 },
+  finalPlayerInfo: { flex: 1 },
+  finalPlayerName: { color: "#fff", fontSize: 18, fontWeight: "600", marginBottom: 4 },
+  finalPlayerRole: { color: "#89a", fontSize: 14 },
+  finalPlayerStatus: { fontSize: 24 },
 });
