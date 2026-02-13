@@ -10,6 +10,7 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -31,7 +32,9 @@ export default function LobbyScreen() {
     mafiaCount: 1,
     detectiveCount: 1,
     doctorCount: 1,
-    villagerCount: 1
+    villagerCount: 1,
+    discussionTimer: false,
+    discussionMinutes: 5
   });
   const [showRoleSettings, setShowRoleSettings] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
@@ -414,7 +417,7 @@ export default function LobbyScreen() {
                         {isMe && <Text style={styles.youText}>(You)</Text>}
                         {isHost && (
                           <View style={styles.hostBadge}>
-                            <Ionicons name="crown" size={14} color="#FFD700" />
+                            <Ionicons name="star" size={14} color="#FFD700" />
                             <Text style={styles.hostText}>Host</Text>
                           </View>
                         )}
@@ -607,6 +610,65 @@ export default function LobbyScreen() {
                     </TouchableOpacity>
                   </View>
                 </View>
+
+                {/* Discussion Timer */}
+                <View style={[styles.roleSettingItem, styles.timerSettingItem]}>
+                  <View style={styles.roleSettingLabelContainer}>
+                    <Text style={styles.roleSettingEmoji}>⏱️</Text>
+                    <View>
+                      <Text style={styles.roleSettingLabel}>Discussion Timer</Text>
+                      <Text style={styles.timerSettingSubtext}>
+                        Limit discussion time during day phase
+                      </Text>
+                    </View>
+                  </View>
+                  <Switch
+                    value={roleSettings.discussionTimer}
+                    onValueChange={(value) =>
+                      updateRoleSettings({
+                        ...roleSettings,
+                        discussionTimer: value,
+                      })
+                    }
+                    trackColor={{ false: "#333", true: "#e63946" }}
+                    thumbColor={roleSettings.discussionTimer ? "#fff" : "#f4f3f4"}
+                  />
+                </View>
+
+                {/* Discussion Time (only show if timer enabled) */}
+                {roleSettings.discussionTimer && (
+                  <View style={styles.roleSettingItem}>
+                    <View style={styles.roleSettingLabelContainer}>
+                      <Text style={styles.roleSettingEmoji}>⏰</Text>
+                      <Text style={styles.roleSettingLabel}>Discussion Time (minutes)</Text>
+                    </View>
+                    <View style={styles.roleSettingControls}>
+                      <TouchableOpacity
+                        style={styles.roleSettingButton}
+                        onPress={() =>
+                          updateRoleSettings({
+                            ...roleSettings,
+                            discussionMinutes: Math.max(1, roleSettings.discussionMinutes - 1),
+                          })
+                        }
+                      >
+                        <Text style={styles.roleSettingButtonText}>−</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.roleSettingValue}>{roleSettings.discussionMinutes}</Text>
+                      <TouchableOpacity
+                        style={styles.roleSettingButton}
+                        onPress={() =>
+                          updateRoleSettings({
+                            ...roleSettings,
+                            discussionMinutes: Math.min(30, roleSettings.discussionMinutes + 1),
+                          })
+                        }
+                      >
+                        <Text style={styles.roleSettingButtonText}>+</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
               </ScrollView>
 
               <View style={styles.roleSettingsInfo}>
@@ -1007,6 +1069,17 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 10,
     fontStyle: "italic",
+  },
+  timerSettingItem: {
+    paddingVertical: 20,
+    borderTopWidth: 2,
+    borderTopColor: "#2d3a5e",
+    marginTop: 10,
+  },
+  timerSettingSubtext: {
+    color: "#888",
+    fontSize: 12,
+    marginTop: 2,
   },
   roleSettingsCloseButton: {
     backgroundColor: "#4CAF50",
